@@ -51,16 +51,11 @@ function enter_call($func_stmts, $sym_table) {
         echo "process one stmt...\n";
         if ($stmt instanceof Node\Expr\Assign) {
             echo "process assign...\n";
+            //$class_methods = get_class_methods("PhpParser\Node\Expr\Assign");
             
-            $class_methods = get_class_methods("PhpParser\Node\Expr\Assign");
-            
-            //echo "$foo\n";
-            $stmt->setAttribute("tainted", true);
-            $foo = $stmt->getAttributes();
-            var_dump($foo);
-            foreach ($class_methods as $method_name) {
-                echo "$method_name\n";
-            }
+            //$stmt->setAttribute("tainted", true);
+            //$foo = $stmt->getAttributes();
+            //var_dump($foo);
             
             $istainted = eval_expr($stmt->expr, $sym_table);
             if ($istainted) {
@@ -152,23 +147,23 @@ function is_source_func($name) {
 function eval_expr($expr, $sym_table) {
     global $user_funcs;
     $expr_type = get_class($expr);
+
     if ($expr instanceof Node\Expr\Variable) {
         echo "evaluate var {$expr->name}...\n";
         if (check_var($expr->name, $sym_table)) {
-            return true;
+            $expr->setAttribute("tainted", true);
         }
         else {
-            return false;
+            $expr->setAttribute("tainted", false);
         }
     }
     else if ($expr instanceof Node\Scalar\LNumber) {
-
         echo "evaluate lnumber {$expr->value}...\n";
-        return false;
+        $expr->setAttribute("tainted", false);
     }
     else if ($expr instanceof Node\Scalar\String_) {
         echo "evaluate string {$expr->value}...\n";
-        return false;
+        $expr->setAttribute("tainted", false);
     }
 
     // else if ($expr instanceof Node\Expr\ArrayDimFetch) {
@@ -182,20 +177,22 @@ function eval_expr($expr, $sym_table) {
     // }
     else if ($expr instanceof Node\Expr\BinaryOp) {
         echo "evaluate binaryOp $expr_type...\n";
-        return eval_expr($expr->left, $sym_table) || eval_expr($expr->right, $sym_table);
+        $is_tainted = eval_expr($expr->left, $sym_table) || eval_expr($expr->right, $sym_table);
+        $expr->setAttribute("tainted", $is_tainted);
     }
     else if ($expr instanceof Node\Scalar\Encapsed) {
         echo "evaluate binaryOp $expr_type...\n";
         foreach($expr->parts as $part) {
             if (eval_expr($part, $sym_table)) {
-                return true;
+                $expr->setAttribute("tainted", true);
+                break;
             }
         }
-        return false;
+        $expr->setAttribute("tainted", false);
     }
     else if ($expr instanceof Node\Scalar\EncapsedStringPart) {
         echo "evaluate EncapsedStringPart $expr->value...\n";
-        return false;
+        $expr->setAttribute("tainted", false);
     }
     else if ($expr instanceof Node\Expr\FuncCall) {
         $func = $expr;
@@ -207,40 +204,37 @@ function eval_expr($expr, $sym_table) {
                 echo "SQL injection vulnerability found in line {$func->getline()}\n";
                // throw new Exception("SQL injection vulnerability found in line {$expr->getline()}");
             }
-            else {
-                return false;
-            }
-            
+            $expr->setAttribute("tainted", false);
         }
         else if (is_source_func($func_name)) {
-            return true;
+            $expr->setAttribute("tainted", true);
         }
         /* if user defined function */
         else if (array_key_exists($func_name, $user_funcs)) {
             $call_site = $func;
             $func_proto = $user_funcs[$func_name];
             $callee_table = gen_sym_table($call_site, $func_proto, $sym_table);
-            return enter_call($func_proto->stmts, $callee_table);
+            $is_tainted = enter_call($func_proto->stmts, $callee_table);
+            $expr->setAttribute("tainted", $is_tainted);
         }
         /* if built-in function */
         else {            
             if (is_args_tainted($func, $sym_table)) {
-                return true;
+                $expr->setAttribute("tainted", true);
             }
             else {
-                return false;
+                $expr->setAttribute("tainted", false);
             }
         }
-        return false;
     }
     else if ($expr instanceof Node\Arg) {
-        return eval_expr($expr->value, $sym_table);
-        
+        $expr->setAttribute("tainted", eval_expr($expr->value, $sym_table));
     }
             
     else {
         echo "unsupported expr type: $expr_type\n";
         var_dump($expr);
     }
+    return $expr->getAttribute("tainted");
 }
 ?>
