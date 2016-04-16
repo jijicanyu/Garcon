@@ -15,15 +15,30 @@ $prettyPrinter = new PrettyPrinter\Standard;
 $log = fopen('php://stderr','a');
 function pp($msg) {
     global $log;
-    fwrite($log, $msg.PHP_EOL);
+    if (gettype($msg) == 'array' || gettype($msg) == 'object') {
+        fwrite($log, var_dump($msg).PHP_EOL);
+    }
+    else {
+        fwrite($log, $msg.PHP_EOL);
+    }
+    
 }
 $code = file_get_contents("php://stdin");
 // parse
 $stmts = $parser->parse($code);
 
 $tainted_vars = [];
-$source_array = ['_GET'=>1, '_POST'=>1, '_COOKIE'=>1, '_ENV'=>1];
-$source_func = ['file_get_contents'=>1, 'mysql_fetch_row'=>1];
+
+$sources['array'] = ['_GET'=>1, '_POST'=>1, '_COOKIE'=>1, '_ENV'=>1];
+$sources['func'] = ['file_get_contents'=>1, 'mysql_fetch_row'=>1];
+$sources['method'] = ['mysqli::query'=>1];
+
+
+$sinks['sql'] = ['pg_query'=>1, 'mysql_query'=>1, 'mysqli::query'=>1];
+$sinks['cmd'] = ['system'=>1];
+
+
+
 $sql_sinks = ['pg_query'=>1];
 $cmdl_sinks = ['system'=>1];
 $user_funcs = []; // a map of user defined functions
@@ -33,23 +48,9 @@ foreach($stmts as $stmt) {
         $user_funcs[$stmt->name] = $stmt;
     }
 }
-//var_dump($user_funcs);
 enter_call($stmts, $tainted_vars);
-// var_dump($tainted_vars);
 pp($code);
-
-// function do_call($func_call, $caller_table) {
-//     global $user_funcs;
-//     $callee_table = gen_sym_table($func_call, $caller_table);
-//     enter_call($user_funcs[$func_call->name], $callee_table);
-// }
-
-//$class_methods = get_class_methods("PhpParser\Node\Expr\Assign");
-            
-//$stmt->setAttribute("tainted", true);
-//$foo = $stmt->getAttributes();
-//var_dump($foo);
-
+pp($tainted_vars);
     
 function enter_call($func_stmts, $sym_table) {   
     /* only consider assign for now */
@@ -111,33 +112,55 @@ function gen_sym_table($call_site, $func_proto, $caller_table) {
 function check_var($name, $sym_table) {
     pp("check var $name");
     if (array_key_exists($name, $sym_table)) {
-        return true;
+        return $sym_table[$name];
     }
     else {
-        return false;
+        return 0;
     }    
 }
 
 function is_sink($func_name) {
-    global $sql_sinks, $cmdl_sinks;
-    if (array_key_exists($func_name, $sql_sinks)) {
-        return true;
+    global $sinks;
+    if (array_key_exists($func_name, $sinks['sql'])) {
+        return 1;
     }
-    return false;
+    else if (array_key_exists($func_name, $sinks['cmd'])) {
+        return 2;
+    }
+    else {
+        return false;
+    }
 }
 
 function is_args_tainted($func, $sym_table) {
     foreach($func->args as $arg) {
-        if (eval_expr($arg, $sym_table)) {        
-            return true;
+        $taint_type = eval_expr($arg, $sym_table);
+        if ($taint_type != 0) {        
+            return $taint_type;
         }
     }
-    return false;
+    return 0;
+}
+
+function is_source($name) {
+    global $sources;
+    if (array_key_exists($name, $sources['array'])) {
+        return 1;
+    }
+    else if (array_key_exists($name, $sources['func'])) {
+        return 2;
+    }
+    if (array_key_exists($name, $sources['method'])) {
+        return 4;
+    }
+    else {
+        return 0;
+    }
 }
 
 function is_source_array($name) {
-    global $source_array;
-    if (array_key_exists($name, $source_array)) {
+    global $sources;
+    if (array_key_exists($name, $sources['array'])) {
         return true;
     }
     else {
@@ -146,8 +169,8 @@ function is_source_array($name) {
 }
 
 function is_source_func($name) {
-    global $source_func;
-    if (array_key_exists($name, $source_func)) {
+    global $sources;
+    if (array_key_exists($name, $sources['func'])) {
         return true;
     }
     else {
@@ -161,20 +184,21 @@ function eval_expr($expr, $sym_table) {
 
     if ($expr instanceof Node\Expr\Variable) {
         pp("evaluate var {$expr->name}...");
-        if (check_var($expr->name, $sym_table)) {
-            $expr->setAttribute("tainted", true);
+        $taint_type = check_var($expr->name, $sym_table);
+        if ($taint_type != 0) {
+            $expr->setAttribute("tainted", $taint_type);
         }
         else {
-            $expr->setAttribute("tainted", false);
+            $expr->setAttribute("tainted", 0);
         }
     }
     else if ($expr instanceof Node\Scalar\LNumber) {
         pp("evaluate lnumber {$expr->value}...");
-        $expr->setAttribute("tainted", false);
+        $expr->setAttribute("tainted", 0);
     }
     else if ($expr instanceof Node\Scalar\String_) {
         pp("evaluate string {$expr->value}...");
-        $expr->setAttribute("tainted", false);
+        $expr->setAttribute("tainted", 0);
     }
 
     // else if ($expr instanceof Node\Expr\ArrayDimFetch) {
@@ -199,26 +223,34 @@ function eval_expr($expr, $sym_table) {
                 break;
             }
         }
-        $expr->setAttribute("tainted", false);
+        $expr->setAttribute("tainted", 0);
     }
     else if ($expr instanceof Node\Scalar\EncapsedStringPart) {
         pp("evaluate EncapsedStringPart $expr->value...");
-        $expr->setAttribute("tainted", false);
+        $expr->setAttribute("tainted", 0);
     }
     else if ($expr instanceof Node\Expr\FuncCall) {
         $func = $expr;
         $func_name = $func->name->parts[0];
         pp("evaluate funcCall $func_name...");
-        if (is_sink($func_name)) {
+        $source_type = is_source($func_name);
+        $sink_type = is_sink($func_name);
+        if ($sink_type != 0) {
             if (is_args_tainted($func, $sym_table))
             {
-                echo "SQL injection vulnerability found in line {$func->getline()}\n";
-               // throw new Exception("SQL injection vulnerability found in line {$expr->getline()}");
+                if ($sink_type == 1) {
+                    echo "SQL injection vulnerability found in line {$func->getline()}\n";
+                    // throw new Exception("SQL injection vulnerability found in line {$expr->getline()}");
+                }
+                else if ($sink_type == 2) {
+                    echo "Command line injection vulnerability found in line {$func->getline()}\n";
+                }
+               
             }
-            $expr->setAttribute("tainted", false);
+            $expr->setAttribute("tainted", 0);
         }
-        else if (is_source_func($func_name)) {
-            $expr->setAttribute("tainted", true);
+        else if ($source_type != 0) {
+            $expr->setAttribute("tainted", $source_type);
         }
         /* if user defined function */
         else if (array_key_exists($func_name, $user_funcs)) {
@@ -229,12 +261,13 @@ function eval_expr($expr, $sym_table) {
             $expr->setAttribute("tainted", $is_tainted);
         }
         /* if built-in function */
-        else {            
-            if (is_args_tainted($func, $sym_table)) {
-                $expr->setAttribute("tainted", true);
+        else {
+            $arg_taint_type = is_args_tainted($func, $sym_table);
+            if ($arg_taint_type != 0) {
+                $expr->setAttribute("tainted", $arg_taint_type);
             }
             else {
-                $expr->setAttribute("tainted", false);
+                $expr->setAttribute("tainted", 0);
             }
         }
     }

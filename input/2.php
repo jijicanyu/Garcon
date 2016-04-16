@@ -6,5 +6,6 @@ function bar($foo) {
 $a = "bar";
 $b = bar($a."1");
 $b = $a;
-pg_query($b);
+$mysqli->query($b);
+
 ?>
