@@ -1,8 +1,10 @@
 <?php
-function foo($s) {
-    return $s."$argv[0]";
+function bar($foo) {
+    return file_get_contents($foo);
 }
 
-$q = foo("select whatever");
+$a = "bar";
+$b = bar($a."1");
 
+pg_query($b);
 ?>
