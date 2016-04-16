@@ -51,14 +51,17 @@ function enter_call($func_stmts, $sym_table) {
         echo "process one stmt...\n";
         if ($stmt instanceof Node\Expr\Assign) {
             echo "process assign...\n";
-            $class_methods = get_class_methods(Node\Expr\Assign);
-            // or
-            //$class_methods = get_class_methods(new myclass());
-
+            
+            $class_methods = get_class_methods("PhpParser\Node\Expr\Assign");
+            
+            //echo "$foo\n";
+            $stmt->setAttribute("tainted", true);
+            $foo = $stmt->getAttributes();
+            var_dump($foo);
             foreach ($class_methods as $method_name) {
                 echo "$method_name\n";
             }
-            }
+            
             $istainted = eval_expr($stmt->expr, $sym_table);
             if ($istainted) {
                 echo "add {$stmt->var->name}\n";
