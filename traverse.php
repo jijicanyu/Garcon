@@ -15,7 +15,7 @@ $prettyPrinter = new PrettyPrinter\Standard;
 $log = fopen('php://stderr','a');
 function pp($msg) {
     global $log;
-    fwrite($log, $msg);
+    fwrite($log, $msg.PHP_EOL);
 }
 $code = file_get_contents("php://stdin");
 // parse
@@ -43,40 +43,51 @@ pp($code);
 //     $callee_table = gen_sym_table($func_call, $caller_table);
 //     enter_call($user_funcs[$func_call->name], $callee_table);
 // }
-    
+
+//$class_methods = get_class_methods("PhpParser\Node\Expr\Assign");
+            
+//$stmt->setAttribute("tainted", true);
+//$foo = $stmt->getAttributes();
+//var_dump($foo);
+
     
 function enter_call($func_stmts, $sym_table) {   
     /* only consider assign for now */
     foreach ($func_stmts as $stmt) {
-        echo "process one stmt...\n";
         if ($stmt instanceof Node\Expr\Assign) {
-            echo "process assign...\n";
-            //$class_methods = get_class_methods("PhpParser\Node\Expr\Assign");
-            
-            //$stmt->setAttribute("tainted", true);
-            //$foo = $stmt->getAttributes();
-            //var_dump($foo);
-            
+            pp("process assign...");            
             $istainted = eval_expr($stmt->expr, $sym_table);
             if ($istainted) {
-                echo "add {$stmt->var->name}\n";
+                pp("add {$stmt->var->name}");
                 $sym_table[$stmt->var->name] = 1;
+            }
+            else if (check_var($stmt->var->name, $sym_table)) {
+                /* delete entry in sym_table */
+                unset($sym_table[$stmt->var->name]);
+                pp("unset {$stmt->var->name}");
+            }
+            else {
+                /* pass */
+                
             }
         }
         else if ($stmt instanceof Node\Expr\FuncCall) {
-            echo "call:", $stmt->name, "\n";
+            pp("process call $stmt->name");
             eval_expr($stmt, $sym_table);
             //do_call($stmt, $sym_table);
             
         }
         else if ($stmt instanceof Node\Stmt\Function_) {
+            pp("process function declaration");
             /* skip declare statement */
             continue;
         }
         else if ($stmt instanceof PhpParser\Node\Stmt\Return_) {
+            pp("process return");
             return eval_expr($stmt->expr, $sym_table);
         }
         else {
+            pp("process unsupported statement");
             echo "unsupported statement type ".get_class($stmt)."\n";
         }
         
@@ -98,7 +109,7 @@ function gen_sym_table($call_site, $func_proto, $caller_table) {
 }
 
 function check_var($name, $sym_table) {
-    echo "check var $name\n";
+    pp("check var $name");
     if (array_key_exists($name, $sym_table)) {
         return true;
     }
@@ -149,7 +160,7 @@ function eval_expr($expr, $sym_table) {
     $expr_type = get_class($expr);
 
     if ($expr instanceof Node\Expr\Variable) {
-        echo "evaluate var {$expr->name}...\n";
+        pp("evaluate var {$expr->name}...");
         if (check_var($expr->name, $sym_table)) {
             $expr->setAttribute("tainted", true);
         }
@@ -158,16 +169,16 @@ function eval_expr($expr, $sym_table) {
         }
     }
     else if ($expr instanceof Node\Scalar\LNumber) {
-        echo "evaluate lnumber {$expr->value}...\n";
+        pp("evaluate lnumber {$expr->value}...");
         $expr->setAttribute("tainted", false);
     }
     else if ($expr instanceof Node\Scalar\String_) {
-        echo "evaluate string {$expr->value}...\n";
+        pp("evaluate string {$expr->value}...");
         $expr->setAttribute("tainted", false);
     }
 
     // else if ($expr instanceof Node\Expr\ArrayDimFetch) {
-    //     echo "evaluate arraydimfetch...\n";
+    //     pp("evaluate arraydimfetch...");
     //     if (is_source_array($expr->var->name)) {
     //         return true;
     //     }
@@ -176,12 +187,12 @@ function eval_expr($expr, $sym_table) {
     //     }
     // }
     else if ($expr instanceof Node\Expr\BinaryOp) {
-        echo "evaluate binaryOp $expr_type...\n";
+        pp("evaluate binaryOp $expr_type...");
         $is_tainted = eval_expr($expr->left, $sym_table) || eval_expr($expr->right, $sym_table);
         $expr->setAttribute("tainted", $is_tainted);
     }
     else if ($expr instanceof Node\Scalar\Encapsed) {
-        echo "evaluate binaryOp $expr_type...\n";
+        pp("evaluate binaryOp $expr_type...");
         foreach($expr->parts as $part) {
             if (eval_expr($part, $sym_table)) {
                 $expr->setAttribute("tainted", true);
@@ -191,13 +202,13 @@ function eval_expr($expr, $sym_table) {
         $expr->setAttribute("tainted", false);
     }
     else if ($expr instanceof Node\Scalar\EncapsedStringPart) {
-        echo "evaluate EncapsedStringPart $expr->value...\n";
+        pp("evaluate EncapsedStringPart $expr->value...");
         $expr->setAttribute("tainted", false);
     }
     else if ($expr instanceof Node\Expr\FuncCall) {
         $func = $expr;
         $func_name = $func->name->parts[0];
-        echo "evaluate funcCall $func_name...\n";
+        pp("evaluate funcCall $func_name...");
         if (is_sink($func_name)) {
             if (is_args_tainted($func, $sym_table))
             {
