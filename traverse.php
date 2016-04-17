@@ -72,7 +72,7 @@ function enter_call($func_stmts, $sym_table) {
                 
             }
         }
-        else if ($stmt instanceof Node\Expr\FuncCall) {
+        else if ($stmt instanceof Node\Expr) {
             pp("process call $stmt->name");
             eval_expr($stmt, $sym_table);
             //do_call($stmt, $sym_table);
@@ -83,12 +83,12 @@ function enter_call($func_stmts, $sym_table) {
             /* skip declare statement */
             continue;
         }
-        else if ($stmt instanceof PhpParser\Node\Stmt\Return_) {
+        else if ($stmt instanceof Node\Stmt\Return_) {
             pp("process return");
             return eval_expr($stmt->expr, $sym_table);
         }
         else {
-            pp("process unsupported statement");
+            //pp("process unsupported statement");
             echo "unsupported statement type ".get_class($stmt)."\n";
         }
         
@@ -178,8 +178,50 @@ function is_source_func($name) {
     }
 }
 
-function eval_expr($expr, $sym_table) {
+function set_flag_for_func($func, $sym_table) {
     global $user_funcs;
+    $func_name = $func->name->parts[0];
+    $source_type = is_source($func_name);
+    $sink_type = is_sink($func_name);
+    if ($sink_type != 0) {
+        if (is_args_tainted($func, $sym_table))
+        {
+            if ($sink_type == 1) {
+                echo "SQL injection vulnerability found in line {$func->getline()}\n";
+                // throw new Exception("SQL injection vulnerability found in line {$func->getline()}");
+            }
+            else if ($sink_type == 2) {
+                echo "Command line injection vulnerability found in line {$func->getline()}\n";
+            }
+               
+        }
+        $func->setAttribute("tainted", 0);
+    }
+    else if ($source_type != 0) {
+        $func->setAttribute("tainted", $source_type);
+    }
+    /* if user defined function */
+    else if (array_key_exists($func_name, $user_funcs)) {
+        $call_site = $func;
+        $func_proto = $user_funcs[$func_name];
+        $callee_table = gen_sym_table($call_site, $func_proto, $sym_table);
+        $is_tainted = enter_call($func_proto->stmts, $callee_table);
+        $func->setAttribute("tainted", $is_tainted);
+    }
+    /* if built-in function */
+    else {
+        $arg_taint_type = is_args_tainted($func, $sym_table);
+        if ($arg_taint_type != 0) {
+            $func->setAttribute("tainted", $arg_taint_type);
+        }
+        else {
+            $func->setAttribute("tainted", 0);
+        }
+    }
+    
+}
+
+function eval_expr($expr, $sym_table) {
     $expr_type = get_class($expr);
 
     if ($expr instanceof Node\Expr\Variable) {
@@ -230,47 +272,17 @@ function eval_expr($expr, $sym_table) {
         $expr->setAttribute("tainted", 0);
     }
     else if ($expr instanceof Node\Expr\FuncCall) {
-        $func = $expr;
-        $func_name = $func->name->parts[0];
-        pp("evaluate funcCall $func_name...");
-        $source_type = is_source($func_name);
-        $sink_type = is_sink($func_name);
-        if ($sink_type != 0) {
-            if (is_args_tainted($func, $sym_table))
-            {
-                if ($sink_type == 1) {
-                    echo "SQL injection vulnerability found in line {$func->getline()}\n";
-                    // throw new Exception("SQL injection vulnerability found in line {$expr->getline()}");
-                }
-                else if ($sink_type == 2) {
-                    echo "Command line injection vulnerability found in line {$func->getline()}\n";
-                }
-               
-            }
-            $expr->setAttribute("tainted", 0);
-        }
-        else if ($source_type != 0) {
-            $expr->setAttribute("tainted", $source_type);
-        }
-        /* if user defined function */
-        else if (array_key_exists($func_name, $user_funcs)) {
-            $call_site = $func;
-            $func_proto = $user_funcs[$func_name];
-            $callee_table = gen_sym_table($call_site, $func_proto, $sym_table);
-            $is_tainted = enter_call($func_proto->stmts, $callee_table);
-            $expr->setAttribute("tainted", $is_tainted);
-        }
-        /* if built-in function */
-        else {
-            $arg_taint_type = is_args_tainted($func, $sym_table);
-            if ($arg_taint_type != 0) {
-                $expr->setAttribute("tainted", $arg_taint_type);
-            }
-            else {
-                $expr->setAttribute("tainted", 0);
-            }
-        }
+        pp("evaluate funcCall {$expr->name->parts[0]}...");
+        set_flag_for_func($expr, $sym_table);
+        
     }
+    else if ($expr instanceof Node\Expr\MethodCall) {
+        pp($expr);
+        //pp("evaluate methodCall {$expr->name->parts[0]}...");
+        $method_name = "$expr->var->name::" 
+        set_flag_for_func($expr, $sym_table);
+    }
+
     else if ($expr instanceof Node\Arg) {
         $expr->setAttribute("tainted", eval_expr($expr->value, $sym_table));
     }
