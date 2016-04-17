@@ -8,6 +8,15 @@ use PhpParser\PrettyPrinter;
 use PhpParser\Node;
 use PhpParser\NodeVisitorAbstract;
 
+class TaintVar {
+    public $value = 0;
+    public $type = "";
+    function __construct($taint_value, $type) {
+        $this->value = $taint_value;
+        $this->type = $type;
+    }
+}
+
 $parser        = (new ParserFactory)->create(ParserFactory::PREFER_PHP7);
 $traverser     = new NodeTraverser;
 $prettyPrinter = new PrettyPrinter\Standard;
@@ -51,21 +60,36 @@ foreach($stmts as $stmt) {
 enter_call($stmts, $tainted_vars);
 pp($code);
 pp($tainted_vars);
-    
+
+function get_left_side_name($expr) {
+    if ($expr instanceof Node\Expr\Variable) {
+        return $expr->name;
+    }
+    else if ($expr instanceof Node\Expr\ArrayDimFetch) {
+        return $expr->var->name . $expr->dim->value;
+        
+    }
+    else {
+        echo "unsupported left side value\n";
+    }
+}
+
 function enter_call($func_stmts, $sym_table) {   
     /* only consider assign for now */
     foreach ($func_stmts as $stmt) {
         if ($stmt instanceof Node\Expr\Assign) {
-            pp("process assign...");            
+            pp("process assign...");
+            //pp($stmt->var);
             $istainted = eval_expr($stmt->expr, $sym_table);
+            $left = get_left_side_name($stmt->var);
             if ($istainted > 0) {
-                pp("add {$stmt->var->name}");
-                $sym_table[$stmt->var->name] = 1;
+                pp("add {$left}");
+                $sym_table[$left] = 1;
             }
-            else if (check_var($stmt->var->name, $sym_table)) {
+            else if (check_var($left, $sym_table)) {
                 /* delete entry in sym_table */
-                unset($sym_table[$stmt->var->name]);
-                pp("unset {$stmt->var->name}");
+                unset($sym_table[$left]);
+                pp("unset {$left}");
             }
             else {
                 /* pass */                
@@ -132,9 +156,9 @@ function is_sink($func_name) {
 
 function is_args_tainted($args, $sym_table) {
     foreach($args as $arg) {
-        $taint_type = eval_expr($arg, $sym_table);
-        if ($taint_type != 0) {        
-            return $taint_type;
+        $taint_value = eval_expr($arg, $sym_table);
+        if ($taint_value != 0) {        
+            return $taint_value;
         }
     }
     return 0;
@@ -153,26 +177,6 @@ function is_source($name) {
     }
     else {
         return 0;
-    }
-}
-
-function is_source_array($name) {
-    global $sources;
-    if (array_key_exists($name, $sources['array'])) {
-        return true;
-    }
-    else {
-        return false;
-    }
-}
-
-function is_source_func($name) {
-    global $sources;
-    if (array_key_exists($name, $sources['func'])) {
-        return true;
-    }
-    else {
-        return false;
     }
 }
 
@@ -206,12 +210,13 @@ function eval_func($func_name, $args, $sym_table) {
 
 function eval_expr($expr, $sym_table) {
     $expr_type = get_class($expr);
+    $taint_var = new TaintVar(0, "");
 
     if ($expr instanceof Node\Expr\Variable) {
         pp("evaluate var {$expr->name}...");
-        $taint_type = check_var($expr->name, $sym_table);
-        if ($taint_type != 0) {
-            $expr->setAttribute("tainted", $taint_type);
+        $taint_value = check_var($expr->name, $sym_table);
+        if ($taint_value != 0) {
+            $expr->setAttribute("tainted", $taint_value);
         }
         else {
             $expr->setAttribute("tainted", 0);
@@ -226,20 +231,24 @@ function eval_expr($expr, $sym_table) {
         $expr->setAttribute("tainted", 0);
     }
 
-    // else if ($expr instanceof Node\Expr\ArrayDimFetch) {
-    //     pp("evaluate arraydimfetch...");
-    //     if (is_source_array($expr->var->name)) {
-    //         return true;
-    //     }
-    //     else {
-    //         return false;
-    //     }
-    // }
+    else if ($expr instanceof Node\Expr\ArrayDimFetch) {
+        pp("evaluate arraydimfetch...");
+        //pp($expr);
+        if (is_source($expr->var->name)) {
+            $expr->setAttribute("tainted", 1);
+        }
+        else {
+            $expr->setAttribute("tainted", eval_expr($expr->var, $sym_table));
+            //pp($expr);
+        }
+    }
+
     else if ($expr instanceof Node\Expr\BinaryOp) {
         pp("evaluate binaryOp $expr_type...");
         $is_tainted = eval_expr($expr->left, $sym_table) || eval_expr($expr->right, $sym_table);
         $expr->setAttribute("tainted", $is_tainted);
     }
+
     else if ($expr instanceof Node\Scalar\Encapsed) {
         pp("evaluate binaryOp $expr_type...");
         foreach($expr->parts as $part) {
@@ -250,17 +259,19 @@ function eval_expr($expr, $sym_table) {
         }
         $expr->setAttribute("tainted", 0);
     }
+
     else if ($expr instanceof Node\Scalar\EncapsedStringPart) {
         pp("evaluate EncapsedStringPart $expr->value...");
         $expr->setAttribute("tainted", 0);
     }
+
     else if ($expr instanceof Node\Expr\FuncCall) {
         pp("evaluate funcCall {$expr->name->parts[0]}...");
         $v = eval_func($expr->name->parts[0], $expr->args, $sym_table);
         $expr->setAttribute("tainted", $v);
     }
+
     else if ($expr instanceof Node\Expr\MethodCall) {
-        pp($expr);        
         $method_name = "{$expr->var->name}::$expr->name";
         pp("evaluate methodCall $method_name...");
         $v = eval_func($method_name, $expr->args, $sym_table);
@@ -268,12 +279,17 @@ function eval_expr($expr, $sym_table) {
     }
 
     else if ($expr instanceof Node\Arg) {
+        pp("evaluate arg {$expr->value->name}");
         $expr->setAttribute("tainted", eval_expr($expr->value, $sym_table));
+    }
+            
+    else if ($expr instanceof Node\Expr\Array_) {
+        $expr->setAttribute("tainted", 0);
     }
             
     else {
         echo "unsupported expr type: $expr_type\n";
-        var_dump($expr);
+        //var_dump($expr);
     }
 
     if ($expr->getAttribute("tainted") < 0) {
@@ -284,6 +300,7 @@ function eval_expr($expr, $sym_table) {
             echo "Command line injection vulnerability found in line {$expr->getline()}\n";
         }
     }
+    pp("return ".$expr->getAttribute("tainted"));
     return $expr->getAttribute("tainted");
 }
 ?>

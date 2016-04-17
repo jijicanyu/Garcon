@@ -4,7 +4,7 @@ function bar($foo) {
 }
 
 $a = "bar";
-$b = bar($a."1");
+$b = bar($a."1", " ");
 //$b = $a;
 //mysql_query($b);
 $mysqli->query($b);
