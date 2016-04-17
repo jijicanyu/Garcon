@@ -58,7 +58,7 @@ function enter_call($func_stmts, $sym_table) {
         if ($stmt instanceof Node\Expr\Assign) {
             pp("process assign...");            
             $istainted = eval_expr($stmt->expr, $sym_table);
-            if ($istainted) {
+            if ($istainted > 0) {
                 pp("add {$stmt->var->name}");
                 $sym_table[$stmt->var->name] = 1;
             }
@@ -68,8 +68,7 @@ function enter_call($func_stmts, $sym_table) {
                 pp("unset {$stmt->var->name}");
             }
             else {
-                /* pass */
-                
+                /* pass */                
             }
         }
         else if ($stmt instanceof Node\Expr) {
@@ -97,13 +96,12 @@ function enter_call($func_stmts, $sym_table) {
     return false;
 }
 
-function gen_sym_table($call_site, $func_proto, $caller_table) {
+function gen_sym_table($args, $func_proto, $caller_table) {
     $newtable = [];
-    assert(count($func_proto->params) == count($call_site->args), "parameters and arguments should have same numbers");
+    assert(count($func_proto->params) == count($args), "parameters and arguments should have same numbers");
     for ($i = 0; $i < count($func_proto->params); $i++) {
         $params = $func_proto->params;
         $param = $params[$i];
-        $args = $call_site->args;
         $newtable[$param->name] = eval_expr($args[$i], $caller_table);
     }
     return $newtable;
@@ -132,8 +130,8 @@ function is_sink($func_name) {
     }
 }
 
-function is_args_tainted($func, $sym_table) {
-    foreach($func->args as $arg) {
+function is_args_tainted($args, $sym_table) {
+    foreach($args as $arg) {
         $taint_type = eval_expr($arg, $sym_table);
         if ($taint_type != 0) {        
             return $taint_type;
@@ -178,47 +176,32 @@ function is_source_func($name) {
     }
 }
 
-function set_flag_for_func($func, $sym_table) {
+function eval_func($func_name, $args, $sym_table) {
     global $user_funcs;
-    $func_name = $func->name->parts[0];
     $source_type = is_source($func_name);
     $sink_type = is_sink($func_name);
     if ($sink_type != 0) {
-        if (is_args_tainted($func, $sym_table))
+        if (is_args_tainted($args, $sym_table))
         {
-            if ($sink_type == 1) {
-                echo "SQL injection vulnerability found in line {$func->getline()}\n";
-                // throw new Exception("SQL injection vulnerability found in line {$func->getline()}");
-            }
-            else if ($sink_type == 2) {
-                echo "Command line injection vulnerability found in line {$func->getline()}\n";
-            }
-               
+            return -$sink_type;
         }
-        $func->setAttribute("tainted", 0);
+        return 0;
+        
     }
     else if ($source_type != 0) {
-        $func->setAttribute("tainted", $source_type);
+        return $source_type;
+        
     }
     /* if user defined function */
     else if (array_key_exists($func_name, $user_funcs)) {
-        $call_site = $func;
         $func_proto = $user_funcs[$func_name];
-        $callee_table = gen_sym_table($call_site, $func_proto, $sym_table);
-        $is_tainted = enter_call($func_proto->stmts, $callee_table);
-        $func->setAttribute("tainted", $is_tainted);
+        $callee_table = gen_sym_table($args, $func_proto, $sym_table);
+        return enter_call($func_proto->stmts, $callee_table);        
     }
     /* if built-in function */
     else {
-        $arg_taint_type = is_args_tainted($func, $sym_table);
-        if ($arg_taint_type != 0) {
-            $func->setAttribute("tainted", $arg_taint_type);
-        }
-        else {
-            $func->setAttribute("tainted", 0);
-        }
+        return is_args_tainted($args, $sym_table);
     }
-    
 }
 
 function eval_expr($expr, $sym_table) {
@@ -273,14 +256,15 @@ function eval_expr($expr, $sym_table) {
     }
     else if ($expr instanceof Node\Expr\FuncCall) {
         pp("evaluate funcCall {$expr->name->parts[0]}...");
-        set_flag_for_func($expr, $sym_table);
-        
+        $v = eval_func($expr->name->parts[0], $expr->args, $sym_table);
+        $expr->setAttribute("tainted", $v);
     }
     else if ($expr instanceof Node\Expr\MethodCall) {
-        pp($expr);
-        //pp("evaluate methodCall {$expr->name->parts[0]}...");
-        $method_name = "$expr->var->name::" 
-        set_flag_for_func($expr, $sym_table);
+        pp($expr);        
+        $method_name = "{$expr->var->name}::$expr->name";
+        pp("evaluate methodCall $method_name...");
+        $v = eval_func($method_name, $expr->args, $sym_table);
+        $expr->setAttribute("tainted", $v);
     }
 
     else if ($expr instanceof Node\Arg) {
@@ -290,6 +274,15 @@ function eval_expr($expr, $sym_table) {
     else {
         echo "unsupported expr type: $expr_type\n";
         var_dump($expr);
+    }
+
+    if ($expr->getAttribute("tainted") < 0) {
+        if ($expr->getAttribute("tainted") == -1) {
+            echo "SQL injection vulnerability found in line {$expr->getline()}\n";
+        }
+        else if ($expr->getAttribute("tainted") == -2) {
+            echo "Command line injection vulnerability found in line {$expr->getline()}\n";
+        }
     }
     return $expr->getAttribute("tainted");
 }
