@@ -68,7 +68,7 @@ foreach($stmts as $stmt) {
     }
 }
 enter_call($stmts, $tainted_vars);
-pp($code);
+//pp($code);
 //pp($tainted_vars);
 
 function get_left_side_name($expr) {
@@ -79,6 +79,11 @@ function get_left_side_name($expr) {
         //return $expr->var->name . $expr->dim->value;
         return $expr->var->name;
     }
+    else if ($expr instanceof Node\Arg) {
+        //return $expr->var->name . $expr->dim->value;
+        return $expr->value->name;
+    }
+
     else if ($expr instanceof Node\Param) {
         return $expr->name;
     }
@@ -217,7 +222,7 @@ function is_source($name) {
     }
 }
 
-function eval_func($func_name, $args, $sym_table) {
+function eval_func($func_name, $args, &$sym_table) {
     global $user_funcs;
     $source_type = is_source($func_name);
     $sink_type = is_sink($func_name);
@@ -241,11 +246,22 @@ function eval_func($func_name, $args, $sym_table) {
     }
     /* if built-in function */
     else {
-        return is_args_tainted($args, $sym_table);
+        /* special cases */
+        if ($func_name == "array_push") {
+            $v = eval_expr($args[1], $sym_table);
+            $sym_table[get_left_side_name($args[0])] = $v;
+            $args[0]->setAttribute("tainted", $v);
+            return $v;
+        }
+        else {
+            return is_args_tainted($args, $sym_table);
+        }
+
+        
     }
 }
 
-function eval_expr($expr, $sym_table) {
+function eval_expr($expr, &$sym_table) {
     $expr_type = get_class($expr);
 
     if ($expr instanceof Node\Expr\Variable) {
@@ -313,10 +329,6 @@ function eval_expr($expr, $sym_table) {
         pp("evaluate funcCall {$expr->name->parts[0]}...");
         $func_name = $expr->name->parts[0];
 
-        /* special cases */
-        if ($func_name == "array_push") {
-            pp("array_push");
-        }
         $v = eval_func($func_name, $expr->args, $sym_table);
         $expr->setAttribute("tainted", $v);
     }
@@ -345,6 +357,8 @@ function eval_expr($expr, $sym_table) {
 
     
     $return_info = $expr->getAttribute("tainted");
+    pp("return ".$return_info->value);
+    //pp($return_info);
     if ($return_info->value < 0) {
         if ($return_info->value == -1) {
             echo "SQL injection vulnerability found in line {$expr->getline()}\n";
@@ -353,7 +367,7 @@ function eval_expr($expr, $sym_table) {
             echo "Command line injection vulnerability found in line {$expr->getline()}\n";
         }
     }
-    pp("return ".$return_info->value);
+    
     return $expr->getAttribute("tainted");
 }
 ?>
