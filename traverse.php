@@ -8,14 +8,24 @@ use PhpParser\PrettyPrinter;
 use PhpParser\Node;
 use PhpParser\NodeVisitorAbstract;
 
-class TaintVar {
+// class TaintVar {
+//     public $value = 0;
+//     public $type = "";
+//     function __construct($taint_value, $type) {
+//         $this->value = $taint_value;
+//         $this->type = $type;
+//     }
+// }
+
+class TaintInfo {
     public $value = 0;
-    public $type = "";
-    function __construct($taint_value, $type) {
-        $this->value = $taint_value;
-        $this->type = $type;
+    public $certainty = 1;
+    function __construct($v, $c) {
+        $this->value = $v;
+        $this->certainty = $c;
     }
 }
+
 
 $parser        = (new ParserFactory)->create(ParserFactory::PREFER_PHP7);
 $traverser     = new NodeTraverser;
@@ -59,18 +69,23 @@ foreach($stmts as $stmt) {
 }
 enter_call($stmts, $tainted_vars);
 pp($code);
-pp($tainted_vars);
+//pp($tainted_vars);
 
 function get_left_side_name($expr) {
     if ($expr instanceof Node\Expr\Variable) {
         return $expr->name;
     }
     else if ($expr instanceof Node\Expr\ArrayDimFetch) {
-        return $expr->var->name . $expr->dim->value;
-        
+        //return $expr->var->name . $expr->dim->value;
+        return $expr->var->name;
     }
+    else if ($expr instanceof Node\Param) {
+        return $expr->name;
+    }
+
     else {
         echo "unsupported left side value\n";
+        pp($expr);
     }
 }
 
@@ -80,13 +95,20 @@ function enter_call($func_stmts, $sym_table) {
         if ($stmt instanceof Node\Expr\Assign) {
             pp("process assign...");
             //pp($stmt->var);
-            $istainted = eval_expr($stmt->expr, $sym_table);
+            $taint_info = eval_expr($stmt->expr, $sym_table);
             $left = get_left_side_name($stmt->var);
-            if ($istainted > 0) {
+            if ($taint_info->value > 0) {
+                /* should also add class */
+                if ($stmt->expr instanceof Node\Expr\ArrayDimFetch) {
+                    $sym_table[$left] = new TaintInfo($taint_info->value, $taint_info->certainty/2);
+                }
+                else {
+                    $sym_table[$left] = $taint_info;
+                }
+
                 pp("add {$left}");
-                $sym_table[$left] = 1;
             }
-            else if (check_var($left, $sym_table)) {
+            else if (check_var($left, $sym_table)->value != 0) {
                 /* delete entry in sym_table */
                 unset($sym_table[$left]);
                 pp("unset {$left}");
@@ -117,16 +139,31 @@ function enter_call($func_stmts, $sym_table) {
         
         //$traverser->traverse(array($stmt));
     }
-    return false;
+    pp($sym_table);
+    return new TaintInfo(0, 1);
 }
 
-function gen_sym_table($args, $func_proto, $caller_table) {
+function gen_callee_table($args, $func_proto, $caller_table) {
     $newtable = [];
-    assert(count($func_proto->params) == count($args), "parameters and arguments should have same numbers");
-    for ($i = 0; $i < count($func_proto->params); $i++) {
-        $params = $func_proto->params;
-        $param = $params[$i];
-        $newtable[$param->name] = eval_expr($args[$i], $caller_table);
+    $params = $func_proto->params;
+    for ($i = 0; $i < count($params); $i++) {
+
+        $left = $params[$i];
+        $right = $args[$i];
+        $taint_info = eval_expr($right, $caller_table);
+        $var_name = get_left_side_name($left);
+        if ($taint_info->value > 0) {
+            pp("add {$var_name}");
+            if ($right instanceof Node\Expr\ArrayDimFetch) {
+                $newtable[$var_name] = new TaintInfo($taint_info->value, $taint_info->certainty/2);
+            }
+            else {
+                $newtable[$var_name] = $taint_info;
+            }
+        }
+        else {
+            
+        }
     }
     return $newtable;
 }
@@ -137,7 +174,7 @@ function check_var($name, $sym_table) {
         return $sym_table[$name];
     }
     else {
-        return 0;
+        return new TaintInfo(0, 1);
     }    
 }
 
@@ -157,11 +194,11 @@ function is_sink($func_name) {
 function is_args_tainted($args, $sym_table) {
     foreach($args as $arg) {
         $taint_value = eval_expr($arg, $sym_table);
-        if ($taint_value != 0) {        
+        if ($taint_value->value != 0) {        
             return $taint_value;
         }
     }
-    return 0;
+    return new TaintInfo(0, 1);
 }
 
 function is_source($name) {
@@ -185,21 +222,21 @@ function eval_func($func_name, $args, $sym_table) {
     $source_type = is_source($func_name);
     $sink_type = is_sink($func_name);
     if ($sink_type != 0) {
-        if (is_args_tainted($args, $sym_table))
+        $taint_info = is_args_tainted($args, $sym_table);
+        if ($taint_info->value)
         {
-            return -$sink_type;
+            return new TaintInfo(-$sink_type, $taint_info->certainty);
         }
-        return 0;
+        return new TaintInfo(0, 1);
         
     }
     else if ($source_type != 0) {
-        return $source_type;
-        
+        return new TaintInfo($source_type, 1);
     }
     /* if user defined function */
     else if (array_key_exists($func_name, $user_funcs)) {
         $func_proto = $user_funcs[$func_name];
-        $callee_table = gen_sym_table($args, $func_proto, $sym_table);
+        $callee_table = gen_callee_table($args, $func_proto, $sym_table);
         return enter_call($func_proto->stmts, $callee_table);        
     }
     /* if built-in function */
@@ -210,32 +247,25 @@ function eval_func($func_name, $args, $sym_table) {
 
 function eval_expr($expr, $sym_table) {
     $expr_type = get_class($expr);
-    $taint_var = new TaintVar(0, "");
 
     if ($expr instanceof Node\Expr\Variable) {
         pp("evaluate var {$expr->name}...");
-        $taint_value = check_var($expr->name, $sym_table);
-        if ($taint_value != 0) {
-            $expr->setAttribute("tainted", $taint_value);
-        }
-        else {
-            $expr->setAttribute("tainted", 0);
-        }
+        $expr->setAttribute("tainted", check_var($expr->name, $sym_table));
     }
     else if ($expr instanceof Node\Scalar\LNumber) {
         pp("evaluate lnumber {$expr->value}...");
-        $expr->setAttribute("tainted", 0);
+        $expr->setAttribute("tainted", new TaintInfo(0, 1));
     }
     else if ($expr instanceof Node\Scalar\String_) {
         pp("evaluate string {$expr->value}...");
-        $expr->setAttribute("tainted", 0);
+        $expr->setAttribute("tainted", new TaintInfo(0, 1));
     }
 
     else if ($expr instanceof Node\Expr\ArrayDimFetch) {
         pp("evaluate arraydimfetch...");
         //pp($expr);
         if (is_source($expr->var->name)) {
-            $expr->setAttribute("tainted", 1);
+            $expr->setAttribute("tainted", new TaintInfo(1, 1));
         }
         else {
             $expr->setAttribute("tainted", eval_expr($expr->var, $sym_table));
@@ -245,29 +275,49 @@ function eval_expr($expr, $sym_table) {
 
     else if ($expr instanceof Node\Expr\BinaryOp) {
         pp("evaluate binaryOp $expr_type...");
-        $is_tainted = eval_expr($expr->left, $sym_table) || eval_expr($expr->right, $sym_table);
-        $expr->setAttribute("tainted", $is_tainted);
+        $left_v = eval_expr($expr->left, $sym_table);
+        $right_v = eval_expr($expr->right, $sym_table);
+        if ($left_v->value) {
+            $expr->setAttribute("tainted", $left_v);
+        }
+        else if ($right_v->value) {
+            $expr->setAttribute("tainted", $right_v);
+        }
+        else {
+            $expr->setAttribute("tainted", new TaintInfo(0, 1));
+        }
     }
 
     else if ($expr instanceof Node\Scalar\Encapsed) {
         pp("evaluate binaryOp $expr_type...");
+        $is_set = false;
         foreach($expr->parts as $part) {
             if (eval_expr($part, $sym_table)) {
-                $expr->setAttribute("tainted", true);
+                $expr->setAttribute("tainted", new TaintInfo(1, 1));
+                $is_set = true;
                 break;
             }
         }
-        $expr->setAttribute("tainted", 0);
+        if (!$is_set) {
+            $expr->setAttribute("tainted", new TaintInfo(0, 1));
+        }
+        
     }
 
     else if ($expr instanceof Node\Scalar\EncapsedStringPart) {
         pp("evaluate EncapsedStringPart $expr->value...");
-        $expr->setAttribute("tainted", 0);
+        $expr->setAttribute("tainted", new TaintInfo(0, 1));
     }
 
     else if ($expr instanceof Node\Expr\FuncCall) {
         pp("evaluate funcCall {$expr->name->parts[0]}...");
-        $v = eval_func($expr->name->parts[0], $expr->args, $sym_table);
+        $func_name = $expr->name->parts[0];
+
+        /* special cases */
+        if ($func_name == "array_push") {
+            pp("array_push");
+        }
+        $v = eval_func($func_name, $expr->args, $sym_table);
         $expr->setAttribute("tainted", $v);
     }
 
@@ -279,12 +329,13 @@ function eval_expr($expr, $sym_table) {
     }
 
     else if ($expr instanceof Node\Arg) {
-        pp("evaluate arg {$expr->value->name}");
-        $expr->setAttribute("tainted", eval_expr($expr->value, $sym_table));
+        pp("evaluate arg $expr_type");
+        $v = eval_expr($expr->value, $sym_table);
+        $expr->setAttribute("tainted", $v);
     }
             
     else if ($expr instanceof Node\Expr\Array_) {
-        $expr->setAttribute("tainted", 0);
+        $expr->setAttribute("tainted", new TaintInfo(0, 1));
     }
             
     else {
@@ -292,15 +343,17 @@ function eval_expr($expr, $sym_table) {
         //var_dump($expr);
     }
 
-    if ($expr->getAttribute("tainted") < 0) {
-        if ($expr->getAttribute("tainted") == -1) {
+    
+    $return_info = $expr->getAttribute("tainted");
+    if ($return_info->value < 0) {
+        if ($return_info->value == -1) {
             echo "SQL injection vulnerability found in line {$expr->getline()}\n";
         }
-        else if ($expr->getAttribute("tainted") == -2) {
+        else if ($return_info->value == -2) {
             echo "Command line injection vulnerability found in line {$expr->getline()}\n";
         }
     }
-    pp("return ".$expr->getAttribute("tainted"));
+    pp("return ".$return_info->value);
     return $expr->getAttribute("tainted");
 }
 ?>

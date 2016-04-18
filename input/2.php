@@ -5,8 +5,8 @@ function bar($foo) {
 
 $a = "bar";
 $b = bar($a."1", " ");
-//$b = $a;
+$c[0] = $b;
 //mysql_query($b);
-$mysqli->query($b);
+$mysqli->query($c[0]);
 
 ?>
