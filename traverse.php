@@ -55,21 +55,19 @@ $sources['method'] = ['mysqli::query'=>1];
 
 $sinks['sql'] = ['pg_query'=>1, 'mysql_query'=>1, 'mysqli::query'=>1];
 $sinks['cmd'] = ['system'=>1];
-
-
-
-$sql_sinks = ['pg_query'=>1];
-$cmdl_sinks = ['system'=>1];
 $user_funcs = []; // a map of user defined functions
+
+$if_mode = 0;
+
 /* construct funcs dict */
 foreach($stmts as $stmt) {
     if ($stmt instanceof Node\Stmt\Function_) {
         $user_funcs[$stmt->name] = $stmt;
     }
 }
-enter_call($stmts, $tainted_vars);
+do_statements($stmts, $tainted_vars);
 //pp($code);
-//pp($tainted_vars);
+pp($tainted_vars);
 
 function get_left_side_name($expr) {
     if ($expr instanceof Node\Expr\Variable) {
@@ -94,7 +92,8 @@ function get_left_side_name($expr) {
     }
 }
 
-function enter_call($func_stmts, $sym_table) {   
+function do_statements($func_stmts, &$sym_table) {
+    global $if_mode;
     /* only consider assign for now */
     foreach ($func_stmts as $stmt) {
         if ($stmt instanceof Node\Expr\Assign) {
@@ -104,9 +103,15 @@ function enter_call($func_stmts, $sym_table) {
             $left = get_left_side_name($stmt->var);
             if ($taint_info->value > 0) {
                 /* should also add class */
+                $confidence = 1;
+                if ($if_mode > 0) {
+                    $confidence = 0.5;
+                }
+                $taint_info->certainty *= $confidence;
                 if ($stmt->expr instanceof Node\Expr\ArrayDimFetch) {
                     $sym_table[$left] = new TaintInfo($taint_info->value, $taint_info->certainty/2);
                 }
+                
                 else {
                     $sym_table[$left] = $taint_info;
                 }
@@ -115,8 +120,11 @@ function enter_call($func_stmts, $sym_table) {
             }
             else if (check_var($left, $sym_table)->value != 0) {
                 /* delete entry in sym_table */
-                unset($sym_table[$left]);
-                pp("unset {$left}");
+                if ($if_mode == 0) {
+                    unset($sym_table[$left]);
+                    pp("unset {$left}");
+                }
+              
             }
             else {
                 /* pass */                
@@ -133,10 +141,23 @@ function enter_call($func_stmts, $sym_table) {
             /* skip declare statement */
             continue;
         }
+        /* ignore ifelse for now */
+        else if ($stmt instanceof Node\Stmt\If_) {
+            $if_mode += 1;
+            do_statements($stmt->stmts, $sym_table);
+            do_statements($stmt->else->stmts, $sym_table);
+            $if_mode -= 1;
+        }
+        
+        // else if ($stmt instanceof Node\Stmt\Else_) {
+        //     do_statements($stmt->stmts, $sym_table);
+        // }
+        
         else if ($stmt instanceof Node\Stmt\Return_) {
             pp("process return");
             return eval_expr($stmt->expr, $sym_table);
         }
+        
         else {
             //pp("process unsupported statement");
             echo "unsupported statement type ".get_class($stmt)."\n";
@@ -144,7 +165,7 @@ function enter_call($func_stmts, $sym_table) {
         
         //$traverser->traverse(array($stmt));
     }
-    pp($sym_table);
+    //pp($sym_table);
     return new TaintInfo(0, 1);
 }
 
@@ -242,7 +263,7 @@ function eval_func($func_name, $args, &$sym_table) {
     else if (array_key_exists($func_name, $user_funcs)) {
         $func_proto = $user_funcs[$func_name];
         $callee_table = gen_callee_table($args, $func_proto, $sym_table);
-        return enter_call($func_proto->stmts, $callee_table);        
+        return do_statements($func_proto->stmts, $callee_table);        
     }
     /* if built-in function */
     else {
@@ -280,8 +301,9 @@ function eval_expr($expr, &$sym_table) {
     else if ($expr instanceof Node\Expr\ArrayDimFetch) {
         pp("evaluate arraydimfetch...");
         //pp($expr);
+        /* set certainty to 2 since array fetch will lose half certainty */
         if (is_source($expr->var->name)) {
-            $expr->setAttribute("tainted", new TaintInfo(1, 1));
+            $expr->setAttribute("tainted", new TaintInfo(1, 2));
         }
         else {
             $expr->setAttribute("tainted", eval_expr($expr->var, $sym_table));
