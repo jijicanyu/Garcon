@@ -57,7 +57,7 @@ $sinks['sql'] = ['pg_query'=>1, 'mysql_query'=>1, 'mysqli::query'=>1];
 $sinks['cmd'] = ['system'=>1];
 $user_funcs = []; // a map of user defined functions
 
-$if_mode = 0;
+$cond_mode = 0;
 
 /* construct funcs dict */
 foreach($stmts as $stmt) {
@@ -92,8 +92,21 @@ function get_left_side_name($expr) {
     }
 }
 
+function union_tables($t1, $t2) {
+    foreach($t1 as $e1=>$obj1) {
+        if (array_key_exists($e1, $t2)) {
+            $obj2 = $t2[$e2];
+            $obj2->certainty = max($obj1->certainty, $obj2->certainty);
+        }
+        else {
+            $t2[$e1] = $obj1;
+        }
+    }
+    return $t2;
+}
+
 function do_statements($func_stmts, &$sym_table) {
-    global $if_mode;
+    global $cond_mode;
     /* only consider assign for now */
     foreach ($func_stmts as $stmt) {
         if ($stmt instanceof Node\Expr\Assign) {
@@ -104,7 +117,7 @@ function do_statements($func_stmts, &$sym_table) {
             if ($taint_info->value > 0) {
                 /* should also add class */
                 $confidence = 1;
-                if ($if_mode > 0) {
+                if ($cond_mode > 0) {
                     $confidence = 0.5;
                 }
                 $taint_info->certainty *= $confidence;
@@ -120,10 +133,10 @@ function do_statements($func_stmts, &$sym_table) {
             }
             else if (check_var($left, $sym_table)->value != 0) {
                 /* delete entry in sym_table */
-                if ($if_mode == 0) {
+                //if ($cond_mode == 0) {
                     unset($sym_table[$left]);
                     pp("unset {$left}");
-                }
+                //}
               
             }
             else {
@@ -143,15 +156,22 @@ function do_statements($func_stmts, &$sym_table) {
         }
         /* ignore ifelse for now */
         else if ($stmt instanceof Node\Stmt\If_) {
-            $if_mode += 1;
+            $cond_mode += 1;
             do_statements($stmt->stmts, $sym_table);
-            do_statements($stmt->else->stmts, $sym_table);
-            $if_mode -= 1;
+            $table1 = $sym_table;
+            if (is_null($stmt->else->stmts) != true) {
+                do_statements($stmt->else->stmts, $sym_table);
+                $table2 = $sym_table;
+                $sym_table = union_tables($table1, $table2);
+            }
+            $cond_mode -= 1;
         }
         
-        // else if ($stmt instanceof Node\Stmt\Else_) {
-        //     do_statements($stmt->stmts, $sym_table);
-        // }
+        else if ($stmt instanceof Node\Stmt\While_) {
+            $cond_mode += 1;
+            do_statements($stmt->stmts, $sym_table);
+            $cond_mode -= 1;
+        }
         
         else if ($stmt instanceof Node\Stmt\Return_) {
             pp("process return");
@@ -388,8 +408,7 @@ function eval_expr($expr, &$sym_table) {
         else if ($return_info->value == -2) {
             echo "Command line injection vulnerability found in line {$expr->getline()}\n";
         }
-    }
-    
+    }  
     return $expr->getAttribute("tainted");
 }
 ?>
