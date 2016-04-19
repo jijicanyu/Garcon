@@ -105,25 +105,34 @@ function union_tables($t1, $t2) {
     return $t2;
 }
 
-function if_while_cond_true($cond) {
+function calc_confidence($cond) {
     if ($cond instanceof Node\Scalar\LNumber) {
         return $cond->value == true;
     }
     else if ($cond instanceof Node\Expr\ConstFetch) {
-        return $cond->name->parts[0] == "true";
+        $name = $cond->name->parts[0];
+        if ($name == "true") {
+            return 1;
+        }
+        else if ($name == "false") {
+            return 0;
+        }
+        else {
+            return 1;
+        }
     }
     else {
-        echo "condition type not supported".PHP_EOL;
+        return 0.5;
     }
     //pp($cond);
 }
 
-function augment_table($out, $in) {
-    global $cond_mode;
-    $confidence = 1;
-    if ($cond_mode > 0) {
-        $confidence = 0.5;
-    }
+function augment_table($out, $in, $confidence) {
+    // global $cond_mode;
+    // $confidence = 1;
+    // if ($cond_mode > 0) {
+    //     $confidence = 0.5;
+    // }
     foreach ($in as $k=>$v) {
         if (!array_key_exists($k, $out)) {
             $v->certainty *= $confidence;
@@ -202,20 +211,24 @@ function do_statements($func_stmts, &$sym_table) {
             }
             $cond_mode -= 1;
 
-            $sym_table = augment_table($out_table, $sym_table);
+            $sym_table = augment_table($out_table, $sym_table, 0.5);
         }
         
         else if ($stmt instanceof Node\Stmt\While_) {
-            $is_cond_true = if_while_cond_true($stmt->cond);
-            /* condition is always true, not condition mode for while */
-            if ($is_cond_true) {
-                do_statements($stmt->stmts, $sym_table);
-            }
-            else {
-                $cond_mode += 1;
-                do_statements($stmt->stmts, $sym_table);
-                $cond_mode -= 1;
-            }
+            $confid = calc_confidence($stmt->cond);
+            $out_table = $sym_table;
+            do_statements($stmt->stmts, $sym_table);
+            $sym_table = augment_table($out_table, $sym_table, $confid);
+
+            // /* condition is always true, not condition mode for while */
+            // if ($is_cond_true) {
+            //     do_statements($stmt->stmts, $sym_table);
+            // }
+            // else {
+            //     $cond_mode += 1;
+            //     do_statements($stmt->stmts, $sym_table);
+            //     $cond_mode -= 1;
+            // }
         }
         
         else if ($stmt instanceof Node\Stmt\Return_) {
