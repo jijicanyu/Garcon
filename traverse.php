@@ -105,6 +105,19 @@ function union_tables($t1, $t2) {
     return $t2;
 }
 
+function if_while_cond_true($cond) {
+    if ($cond instanceof Node\Scalar\LNumber) {
+        return $cond->value == true;
+    }
+    else if ($cond instanceof Node\Expr\ConstFetch) {
+        return $cond->name->parts[0] == "true";
+    }
+    else {
+        echo "condition type not supported".PHP_EOL;
+    }
+    //pp($cond);
+}
+
 function augment_table($out, $in) {
     global $cond_mode;
     $confidence = 1;
@@ -193,9 +206,16 @@ function do_statements($func_stmts, &$sym_table) {
         }
         
         else if ($stmt instanceof Node\Stmt\While_) {
-            $cond_mode += 1;
-            do_statements($stmt->stmts, $sym_table);
-            $cond_mode -= 1;
+            $is_cond_true = if_while_cond_true($stmt->cond);
+            /* condition is always true, not condition mode for while */
+            if ($is_cond_true) {
+                do_statements($stmt->stmts, $sym_table);
+            }
+            else {
+                $cond_mode += 1;
+                do_statements($stmt->stmts, $sym_table);
+                $cond_mode -= 1;
+            }
         }
         
         else if ($stmt instanceof Node\Stmt\Return_) {
