@@ -66,7 +66,7 @@ foreach($stmts as $stmt) {
     }
 }
 do_statements($stmts, $tainted_vars);
-//pp($code);
+pp($code);
 pp($tainted_vars);
 
 function get_left_side_name($expr) {
@@ -159,7 +159,7 @@ function do_statements($func_stmts, &$sym_table) {
             $cond_mode += 1;
             do_statements($stmt->stmts, $sym_table);
             $table1 = $sym_table;
-            if (is_null($stmt->else->stmts) != true) {
+            if (is_null($stmt->else) != true) {
                 do_statements($stmt->else->stmts, $sym_table);
                 $table2 = $sym_table;
                 $sym_table = union_tables($table1, $table2);
