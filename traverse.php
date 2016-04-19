@@ -105,6 +105,32 @@ function union_tables($t1, $t2) {
     return $t2;
 }
 
+function augment_table($out, $in) {
+    global $cond_mode;
+    $confidence = 1;
+    if ($cond_mode > 0) {
+        $confidence = 0.5;
+    }
+    foreach ($in as $k=>$v) {
+        if (!array_key_exists($k, $out)) {
+            $v->certainty *= $confidence;
+            $out[$k] = $v;
+            pp("add $k, certainty: $v->certainty");
+        }
+    }
+    foreach ($out as $k=>$v) {
+        if (!array_key_exists($k, $in)) {
+            $v->certainty -= $v->certainty*$confidence;
+            pp("update $k, certainty: $v->certainty");
+        }
+        if ($v->certainty == 0) {
+            unset($out[$k]);
+            pp("unset $k");
+        }
+    }
+    return $out;
+}
+
 function do_statements($func_stmts, &$sym_table) {
     global $cond_mode;
     /* only consider assign for now */
@@ -116,11 +142,6 @@ function do_statements($func_stmts, &$sym_table) {
             $left = get_left_side_name($stmt->var);
             if ($taint_info->value > 0) {
                 /* should also add class */
-                $confidence = 1;
-                if ($cond_mode > 0) {
-                    $confidence = 0.5;
-                }
-                $taint_info->certainty *= $confidence;
                 if ($stmt->expr instanceof Node\Expr\ArrayDimFetch) {
                     $sym_table[$left] = new TaintInfo($taint_info->value, $taint_info->certainty/2);
                 }
@@ -156,6 +177,8 @@ function do_statements($func_stmts, &$sym_table) {
         }
         /* ignore ifelse for now */
         else if ($stmt instanceof Node\Stmt\If_) {
+            $out_table = $sym_table;
+            
             $cond_mode += 1;
             do_statements($stmt->stmts, $sym_table);
             $table1 = $sym_table;
@@ -165,6 +188,8 @@ function do_statements($func_stmts, &$sym_table) {
                 $sym_table = union_tables($table1, $table2);
             }
             $cond_mode -= 1;
+
+            $sym_table = augment_table($out_table, $sym_table);
         }
         
         else if ($stmt instanceof Node\Stmt\While_) {
