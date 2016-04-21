@@ -452,7 +452,7 @@ function eval_expr($expr, &$sym_table) {
             
     else {
         echo "unsupported expr type: $expr_type\n";
-        //var_dump($expr);
+        pp($expr);
     }
 
     
