@@ -47,6 +47,7 @@ $code = file_get_contents("php://stdin");
 $stmts = $parser->parse($code);
 
 $tainted_vars = [];
+$alias_map = [];
 
 $sources['array'] = ['_GET'=>1, '_POST'=>1, '_COOKIE'=>1, '_ENV'=>1];
 $sources['func'] = ['file_get_contents'=>1, 'mysql_fetch_row'=>1];
@@ -158,15 +159,16 @@ function do_assign($left, $right, &$sym_table) {
     $taint_info = eval_expr($right, $sym_table);
     if ($taint_info->value > 0) {
         if ($right instanceof Node\Expr\ArrayDimFetch) {
-            $sym_table[$left_name] = new TaintInfo($taint_info->value, $taint_info->certainty/2);
+            set_var($left_name, new TaintInfo($taint_info->value, $taint_info->certainty/2), $sym_table);
         }                
         else {
-            $sym_table[$left_name] = $taint_info;
+            set_var($left_name, $taint_info, $sym_table);
         }
     }
     else {
-        if (check_var($left_name, $sym_table)->value != 0) {
-            unset($sym_table[$left_name]);
+        $target = get_alias($left_name);
+        if (get_var($target, $sym_table)->value != 0) {
+            unset($sym_table[$target]);
             pp("unset $left_name");
         }
     }
@@ -289,15 +291,46 @@ function gen_callee_table($args, $func_proto, $caller_table) {
     return $newtable;
 }
 
-function check_var($name, $sym_table) {
-    pp("check var $name");
-    if (array_key_exists($name, $sym_table)) {
-        return $sym_table[$name];
+// function check_var($name, $sym_table) {
+//     global $alias_map;
+//     pp("check var $name");
+//     if (array_key_exists($name, $sym_table)) {
+//         return $sym_table[$name];
+//     }
+//     else {
+//         return new TaintInfo(0, 1);
+//     }    
+// }
+
+function get_alias($name) {
+    global $alias_map;
+    $target = $name;
+    while (array_key_exists($target, $alias_map)) {
+        $target = $alias_map[$target];
+    }
+    pp("$name's alias is $target...");
+    return $target;
+}
+
+function get_var($name, $sym_table) {
+    $target = get_alias($name);
+    if (array_key_exists($target, $sym_table)) {
+        return $sym_table[$target];
     }
     else {
         return new TaintInfo(0, 1);
     }    
 }
+
+function set_var($name, $obj, &$sym_table) {
+    $target = get_alias($name);
+    $sym_table[$target] = $obj;
+}
+
+// function unset_var($name, &$sym_table) {
+//     $target = get_alias($name);
+//     unset($sym_table[$target]);
+// }
 
 function is_sink($func_name) {
     global $sinks;
@@ -382,7 +415,7 @@ function eval_expr($expr, &$sym_table) {
 
     if ($expr instanceof Node\Expr\Variable) {
         pp("evaluate var {$expr->name}...");
-        $expr->setAttribute("tainted", check_var($expr->name, $sym_table));
+        $expr->setAttribute("tainted", get_var($expr->name, $sym_table));
     }
     else if ($expr instanceof Node\Scalar\LNumber) {
         pp("evaluate lnumber {$expr->value}...");
@@ -470,7 +503,11 @@ function eval_expr($expr, &$sym_table) {
     else if ($expr instanceof Node\Expr\Assign) {
         return do_assign($expr->var, $expr->expr, $sym_table);
     }
-            
+
+    else if ($expr instanceof Node\Expr\AssignRef) {
+        return do_assignref($expr->var, $expr->expr, $sym_table);
+    }
+    
     else {
         echo "unsupported expr type: $expr_type\n";
         pp($expr);
@@ -488,5 +525,11 @@ function eval_expr($expr, &$sym_table) {
         }
     }  
     return $expr->getAttribute("tainted");
+}
+
+function do_assignref($left, $right, $sym_table) {
+    global $alias_map;
+    $alias_map[get_left_side_name($left)] = $right->name;
+    return get_var($right->name, $sym_table);
 }
 ?>
