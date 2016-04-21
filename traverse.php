@@ -166,8 +166,7 @@ function do_statements($func_stmts, &$sym_table) {
                 /* should also add class */
                 if ($stmt->expr instanceof Node\Expr\ArrayDimFetch) {
                     $sym_table[$left] = new TaintInfo($taint_info->value, $taint_info->certainty/2);
-                }
-                
+                }                
                 else {
                     $sym_table[$left] = $taint_info;
                 }
