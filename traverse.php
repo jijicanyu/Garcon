@@ -153,43 +153,61 @@ function augment_table($out, $in, $confidence) {
     return $out;
 }
 
+function do_assign($left, $right, &$sym_table) {
+    $left_name = get_left_side_name($left);
+    $taint_info = eval_expr($right, $sym_table);
+    if ($taint_info->value > 0) {
+        if ($right instanceof Node\Expr\ArrayDimFetch) {
+            $sym_table[$left_name] = new TaintInfo($taint_info->value, $taint_info->certainty/2);
+        }                
+        else {
+            $sym_table[$left_name] = $taint_info;
+        }
+    }
+    else {
+        if (check_var($left_name, $sym_table)->value != 0) {
+            unset($sym_table[$left_name]);
+            pp("unset $left_name");
+        }
+    }
+    return $taint_info;
+}
+
 function do_statements($func_stmts, &$sym_table) {
     global $cond_mode;
     /* only consider assign for now */
     foreach ($func_stmts as $stmt) {
-        if ($stmt instanceof Node\Expr\Assign) {
-            pp("process assign...");
-            //pp($stmt->var);
-            $taint_info = eval_expr($stmt->expr, $sym_table);
-            $left = get_left_side_name($stmt->var);
-            if ($taint_info->value > 0) {
-                /* should also add class */
-                if ($stmt->expr instanceof Node\Expr\ArrayDimFetch) {
-                    $sym_table[$left] = new TaintInfo($taint_info->value, $taint_info->certainty/2);
-                }                
-                else {
-                    $sym_table[$left] = $taint_info;
-                }
+        // if ($stmt instanceof Node\Expr\Assign) {
+        //     pp("process assign...");
+        //     //pp($stmt->var);
+        //     $taint_info = eval_expr($stmt->expr, $sym_table);
+        //     $left = get_left_side_name($stmt->var);
+        //     if ($taint_info->value > 0) {
+        //         /* should also add class */
+        //         if ($stmt->expr instanceof Node\Expr\ArrayDimFetch) {
+        //             $sym_table[$left] = new TaintInfo($taint_info->value, $taint_info->certainty/2);
+        //         }                
+        //         else {
+        //             $sym_table[$left] = $taint_info;
+        //         }
 
-                pp("add {$left}");
-            }
-            else if (check_var($left, $sym_table)->value != 0) {
-                /* delete entry in sym_table */
-                //if ($cond_mode == 0) {
-                    unset($sym_table[$left]);
-                    pp("unset {$left}");
-                //}
+        //         pp("add {$left}");
+        //     }
+        //     else if (check_var($left, $sym_table)->value != 0) {
+        //         /* delete entry in sym_table */
+        //         //if ($cond_mode == 0) {
+        //             unset($sym_table[$left]);
+        //             pp("unset {$left}");
+        //         //}
               
-            }
-            else {
-                /* pass */                
-            }
-        }
-        else if ($stmt instanceof Node\Expr) {
-            pp("process call $stmt->name");
+        //     }
+        //     else {
+        //         /* pass */                
+        //     }
+        // }
+        if ($stmt instanceof Node\Expr) {
+            pp("process expr...");
             eval_expr($stmt, $sym_table);
-            //do_call($stmt, $sym_table);
-            
         }
         else if ($stmt instanceof Node\Stmt\Function_) {
             pp("process function declaration");
@@ -448,12 +466,15 @@ function eval_expr($expr, &$sym_table) {
     else if ($expr instanceof Node\Expr\Array_) {
         $expr->setAttribute("tainted", new TaintInfo(0, 1));
     }
+
+    else if ($expr instanceof Node\Expr\Assign) {
+        return do_assign($expr->var, $expr->expr, $sym_table);
+    }
             
     else {
         echo "unsupported expr type: $expr_type\n";
         pp($expr);
     }
-
     
     $return_info = $expr->getAttribute("tainted");
     pp("return ".$return_info->value);
