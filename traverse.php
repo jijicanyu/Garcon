@@ -68,7 +68,8 @@ foreach($stmts as $stmt) {
 }
 do_statements($stmts, $tainted_vars);
 pp($code);
-pp($tainted_vars);
+//pp($tainted_vars);
+fclose($log);
 
 function get_left_side_name($expr) {
     if ($expr instanceof Node\Expr\Variable) {
@@ -404,9 +405,7 @@ function eval_func($func_name, $args, &$sym_table) {
         }
         else {
             return is_args_tainted($args, $sym_table);
-        }
-
-        
+        }        
     }
 }
 
