@@ -8,15 +8,6 @@ use PhpParser\PrettyPrinter;
 use PhpParser\Node;
 use PhpParser\NodeVisitorAbstract;
 
-// class TaintVar {
-//     public $value = 0;
-//     public $type = "";
-//     function __construct($taint_value, $type) {
-//         $this->value = $taint_value;
-//         $this->type = $type;
-//     }
-// }
-
 class TaintInfo {
     public $value = 0;
     public $certainty = 1;
@@ -25,7 +16,6 @@ class TaintInfo {
         $this->certainty = $c;
     }
 }
-
 
 $parser        = (new ParserFactory)->create(ParserFactory::PREFER_PHP7);
 $traverser     = new NodeTraverser;
@@ -68,7 +58,7 @@ foreach($stmts as $stmt) {
 }
 do_statements($stmts, $tainted_vars);
 pp($code);
-//pp($tainted_vars);
+pp($tainted_vars);
 fclose($log);
 
 function get_left_side_name($expr) {
@@ -79,32 +69,60 @@ function get_left_side_name($expr) {
         //return $expr->var->name . $expr->dim->value;
         return $expr->var->name;
     }
+    else if ($expr instanceof Node\Expr\PropertyFetch) {
+        return $expr->var->name."::".$expr->name;
+    }
     else if ($expr instanceof Node\Arg) {
         //return $expr->var->name . $expr->dim->value;
         return $expr->value->name;
     }
-
     else if ($expr instanceof Node\Param) {
         return $expr->name;
     }
-
     else {
         echo "unsupported left side value\n";
         pp($expr);
     }
 }
 
+/* deprecated union strategy */
+// function union_tables($t1, $t2) {
+//     foreach($t1 as $e1=>$obj1) {
+//         if (array_key_exists($e1, $t2)) {
+//             $obj2 = $t2[$e2];
+//             $obj2->certainty = max($obj1->certainty, $obj2->certainty);
+//         }
+//         else {
+//             $t2[$e1] = $obj1;
+//         }
+//     }
+//     return $t2;
+// }
+
 function union_tables($t1, $t2) {
-    foreach($t1 as $e1=>$obj1) {
-        if (array_key_exists($e1, $t2)) {
-            $obj2 = $t2[$e2];
-            $obj2->certainty = max($obj1->certainty, $obj2->certainty);
+    $keys1 = array_keys($t1);
+    $keys2 = array_keys($t2);
+    $allkeys = array_unique(array_merge($keys1, $keys2));
+    $newtable = [];
+    foreach($allkeys as $k) {
+        $sum = 0;
+        if (array_key_exists($k, $t1)) {
+            /* if exists in $t1 and $t2 */
+            if (array_key_exists($k, $t2)) {
+                $t1[$k]->certainty += $t2[$k]->certainty;
+                $newtable[$k] = $t1[$k];
+            }
+            /* if only exists in $t1 */
+            else {
+                $newtable[$k] = $t1[$k];
+            }
         }
+        /* if only exists in $t2 */
         else {
-            $t2[$e1] = $obj1;
+            $newtable[$k] = $t2[$k];
         }
     }
-    return $t2;
+    return $newtable;
 }
 
 function calc_confidence($cond) {
@@ -438,6 +456,12 @@ function eval_expr($expr, &$sym_table) {
         }
     }
 
+    else if ($expr instanceof Node\Expr\PropertyFetch) {
+        pp("evaluate propertyfetch...");
+        $name = get_left_side_name($expr);
+        $expr->setAttribute("tainted", get_var($name, $sym_table));
+    }
+
     else if ($expr instanceof Node\Expr\BinaryOp) {
         pp("evaluate binaryOp $expr_type...");
         $left_v = eval_expr($expr->left, $sym_table);
@@ -516,11 +540,12 @@ function eval_expr($expr, &$sym_table) {
     pp("return ".$return_info->value);
     //pp($return_info);
     if ($return_info->value < 0) {
+        $percent_certainty = round($return_info->certainty * 100 ) . '%';
         if ($return_info->value == -1) {
-            echo "SQL injection vulnerability found in line {$expr->getline()}\n";
+            echo "SQL injection vulnerability found in line {$expr->getline()}, certainty: {$percent_certainty}\n";
         }
         else if ($return_info->value == -2) {
-            echo "Command line injection vulnerability found in line {$expr->getline()}\n";
+            echo "Command line injection vulnerability found in line {$expr->getline()}, certainty: {$percent_certainty}\n";
         }
     }  
     return $expr->getAttribute("tainted");
@@ -530,5 +555,9 @@ function do_assignref($left, $right, $sym_table) {
     global $alias_map;
     $alias_map[get_left_side_name($left)] = $right->name;
     return get_var($right->name, $sym_table);
+}
+
+function print_trace($tree) {
+    pp($tree);
 }
 ?>
