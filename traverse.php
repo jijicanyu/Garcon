@@ -59,6 +59,7 @@ foreach($stmts as $stmt) {
 do_statements($stmts, $tainted_vars);
 pp($code);
 pp($tainted_vars);
+print_stmts($stmts);
 fclose($log);
 
 function get_left_side_name($expr) {
@@ -344,6 +345,7 @@ function get_var($name, $sym_table) {
 function set_var($name, $obj, &$sym_table) {
     $target = get_alias($name);
     $sym_table[$target] = $obj;
+    
 }
 
 // function unset_var($name, &$sym_table) {
@@ -382,7 +384,7 @@ function is_source($name) {
     else if (array_key_exists($name, $sources['func'])) {
         return 2;
     }
-    if (array_key_exists($name, $sources['method'])) {
+    else if (array_key_exists($name, $sources['method'])) {
         return 4;
     }
     else {
@@ -557,7 +559,149 @@ function do_assignref($left, $right, $sym_table) {
     return get_var($right->name, $sym_table);
 }
 
-function print_trace($tree) {
-    pp($tree);
+/* all types of taint will have the same color, certainty is indicated by opacity */
+function set_color($color, $opacity) {
+    if ($color == "red") {
+        if ($opacity == 1) {
+            echo "\[\033[1;31m\]]";
+        }
+        else {
+            echo "\[\033[0;31m\]]";
+        }
+    }
+    else {
+        echo "do not support other colors";
+    }
+}
+
+function unset_color() {
+    echo "\[\033[0m\]]";
+}
+
+function print_expr($expr) {
+    $info = $expr->getAttribute("tainted");
+    if ($expr instanceof Node\Expr\Variable) {
+        if ($info->value > 0) {
+            set_color("red", $info->certainty);
+        }
+        echo $expr->name;
+        unset_color();
+    }
+    else if ($expr instanceof Node\Scalar\LNumber) {
+        
+    }
+    else if ($expr instanceof Node\Scalar\String_) {
+
+    }
+
+    else if ($expr instanceof Node\Expr\ArrayDimFetch) {
+        echo $expr->var->name."[...]";
+    }
+
+    else if ($expr instanceof Node\Expr\PropertyFetch) {
+        echo "propertyfetch";
+    }
+
+    else if ($expr instanceof Node\Expr\BinaryOp) {
+        pp("evaluate binaryOp $expr_type...");
+        print_expr($expr->left);
+        echo " op ";
+        print_expr($expr->right);
+    }
+
+    // else if ($expr instanceof Node\Scalar\Encapsed) {
+    //     /* to be filled */
+    // }
+
+    // else if ($expr instanceof Node\Scalar\EncapsedStringPart) {
+    //     pp("evaluate EncapsedStringPart $expr->value...");
+    //     $expr->setAttribute("tainted", new TaintInfo(0, 1));
+    // }
+
+    else if ($expr instanceof Node\Expr\FuncCall) {
+        $func_name = $expr->name->parts[0];
+        echo $func_name."(...)";
+    }
+
+    // else if ($expr instanceof Node\Expr\MethodCall) {
+    //     $method_name = "{$expr->var->name}::$expr->name";
+    //     pp("evaluate methodCall $method_name...");
+    //     $v = eval_func($method_name, $expr->args, $sym_table);
+    //     $expr->setAttribute("tainted", $v);
+    // }
+
+    // else if ($expr instanceof Node\Arg) {
+    //     pp("evaluate arg $expr_type");
+    //     $v = eval_expr($expr->value, $sym_table);
+    //     $expr->setAttribute("tainted", $v);
+    // }
+            
+    else if ($expr instanceof Node\Expr\Array_) {
+
+    }
+
+    else if ($expr instanceof Node\Expr\Assign) {
+        print_expr($expr->var);
+        echo " = ";
+        print_expr($expr->Expr);
+        return do_assign($expr->var, $expr->expr, $sym_table);
+    }
+
+    // else if ($expr instanceof Node\Expr\AssignRef) {
+    //     return do_assignref($expr->var, $expr->expr, $sym_table);
+    // }
+    
+    else {
+        echo "unsupported expr type\n";
+        pp($expr);
+    }
+}
+
+function print_stmts($stmts) {
+    pp($stmts);
+    foreach($stmts as $stmt) {
+        if ($stmt instanceof Node\Expr) {
+            print_expr($stmt);
+        }
+        // else if ($stmt instanceof Node\Stmt\Function_) {
+        //     pp("process function declaration");
+        //     /* skip declare statement */
+        //     continue;
+        // }
+        // /* ignore ifelse for now */
+        // else if ($stmt instanceof Node\Stmt\If_) {
+        //     $out_table = $sym_table;
+            
+        //     $cond_mode += 1;
+        //     do_statements($stmt->stmts, $sym_table);
+        //     $table1 = $sym_table;
+        //     if (is_null($stmt->else) != true) {
+        //         do_statements($stmt->else->stmts, $sym_table);
+        //         $table2 = $sym_table;
+        //         $sym_table = union_tables($table1, $table2);
+        //     }
+        //     $cond_mode -= 1;
+
+        //     $sym_table = augment_table($out_table, $sym_table, 0.5);
+        // }
+        
+        // else if ($stmt instanceof Node\Stmt\While_) {
+        //     $confid = calc_confidence($stmt->cond);
+        //     $out_table = $sym_table;
+        //     do_statements($stmt->stmts, $sym_table);
+        //     $sym_table = augment_table($out_table, $sym_table, $confid);
+        // }
+        
+        // else if ($stmt instanceof Node\Stmt\Return_) {
+        //     pp("process return");
+        //     return eval_expr($stmt->expr, $sym_table);
+        // }
+        
+        else {
+            //pp("process unsupported statement");
+            echo "unsupported statement type ".get_class($stmt)."\n";
+        }
+
+    }
 }
 ?>
