@@ -178,12 +178,18 @@ function do_assign($left, $right, &$sym_table) {
     $left_name = get_left_side_name($left);
     $taint_info = eval_expr($right, $sym_table);
     if ($taint_info->value > 0) {
-        if ($right instanceof Node\Expr\ArrayDimFetch) {
-            set_var($left_name, new TaintInfo($taint_info->value, $taint_info->certainty/2), $sym_table);
-        }                
-        else {
-            set_var($left_name, $taint_info, $sym_table);
-        }
+        $left->setAttribute("tainted", $taint_info);
+        set_var($left,$sym_table);
+
+        // if ($right instanceof Node\Expr\ArrayDimFetch) {
+        //     $left->setAttribute("tainted", new TaintInfo($taint_info->value, $taint_info->certainty/2));
+        //     set_var($left, $sym_table);
+        // }                
+        // else {
+        //     $left->setAttribute("tainted", $taint_info);
+        //     set_var($left,$sym_table);
+        // }
+        pp("set $left_name");
     }
     else {
         $target = get_alias($left_name);
@@ -342,9 +348,10 @@ function get_var($name, $sym_table) {
     }    
 }
 
-function set_var($name, $obj, &$sym_table) {
+function set_var($left, &$sym_table) {
+    $name = get_left_side_name($left);
     $target = get_alias($name);
-    $sym_table[$target] = $obj;
+    $sym_table[$target] = $left->getAttribute("tainted");
     
 }
 
@@ -450,10 +457,11 @@ function eval_expr($expr, &$sym_table) {
         //pp($expr);
         /* set certainty to 2 since array fetch will lose half certainty */
         if (is_source($expr->var->name)) {
-            $expr->setAttribute("tainted", new TaintInfo(1, 2));
+            $expr->setAttribute("tainted", new TaintInfo(1, 1));
         }
         else {
-            $expr->setAttribute("tainted", eval_expr($expr->var, $sym_table));
+            $info = eval_expr($expr->var, $sym_table);
+            $expr->setAttribute("tainted", new TaintInfo($info->value, $info->certainty/2));
             //pp($expr);
         }
     }
@@ -562,11 +570,11 @@ function do_assignref($left, $right, $sym_table) {
 /* all types of taint will have the same color, certainty is indicated by opacity */
 function set_color($color, $opacity) {
     if ($color == "red") {
-        if ($opacity == 1) {
-            echo "\[\033[1;31m\]]";
+        if ($opacity >= 1) {
+            echo "\033[1;31m";
         }
         else {
-            echo "\[\033[0;31m\]]";
+            echo "\033[0;31m";
         }
     }
     else {
@@ -575,27 +583,47 @@ function set_color($color, $opacity) {
 }
 
 function unset_color() {
-    echo "\[\033[0m\]]";
+    echo "\033[0m";
+}
+
+function print_binary_op($expr) {
+    if ($expr instanceof Node\Expr\BinaryOp\Concat) {
+        echo " . ";
+    }
+    else if ($expr instanceof Node\Expr\BinaryOp\Plus) {
+        echo " + ";
+    }
+    else if ($expr instanceof Node\Expr\BinaryOp\Minus) {
+        echo " - ";
+    }
+    else {
+        echo "op not supported: {$expr->gettype()}";
+    }
+
 }
 
 function print_expr($expr) {
     $info = $expr->getAttribute("tainted");
     if ($expr instanceof Node\Expr\Variable) {
-        if ($info->value > 0) {
+        if (!is_null($info) && $info->value > 0) {
             set_color("red", $info->certainty);
         }
-        echo $expr->name;
+        echo "$".  $expr->name;
         unset_color();
     }
     else if ($expr instanceof Node\Scalar\LNumber) {
-        
+        echo $expr->value;
     }
     else if ($expr instanceof Node\Scalar\String_) {
-
+        echo '"'.$expr->value.'"';
     }
 
     else if ($expr instanceof Node\Expr\ArrayDimFetch) {
-        echo $expr->var->name."[...]";
+        if (!is_null($info) && $info->value > 0) {
+            set_color("red", $info->certainty);
+        }
+        echo "$".$expr->var->name."[...];\n";
+        unset_color();
     }
 
     else if ($expr instanceof Node\Expr\PropertyFetch) {
@@ -603,9 +631,9 @@ function print_expr($expr) {
     }
 
     else if ($expr instanceof Node\Expr\BinaryOp) {
-        pp("evaluate binaryOp $expr_type...");
         print_expr($expr->left);
-        echo " op ";
+        print_binary_op($expr);
+        //        pp($expr);
         print_expr($expr->right);
     }
 
@@ -620,7 +648,18 @@ function print_expr($expr) {
 
     else if ($expr instanceof Node\Expr\FuncCall) {
         $func_name = $expr->name->parts[0];
-        echo $func_name."(...)";
+        echo $func_name."(";
+        //pp($expr);
+        $args_name = [];
+        ob_start();
+        foreach($expr->args as $arg) {
+            print_expr($arg);
+        }
+        $buf = ob_get_contents();
+        ob_end_clean();
+        echo substr($buf, 0, -6); //-6 is a very subtle number in this case
+        unset_color();
+        echo ");\n";
     }
 
     // else if ($expr instanceof Node\Expr\MethodCall) {
@@ -630,21 +669,25 @@ function print_expr($expr) {
     //     $expr->setAttribute("tainted", $v);
     // }
 
-    // else if ($expr instanceof Node\Arg) {
-    //     pp("evaluate arg $expr_type");
-    //     $v = eval_expr($expr->value, $sym_table);
-    //     $expr->setAttribute("tainted", $v);
-    // }
+    else if ($expr instanceof Node\Arg) {
+        
+        if (!is_null($info) && $info->value > 0) {
+            set_color("red", $info->certainty);
+        }
+        echo "$" . $expr->value->name. ", ";
+        unset_color();
+        //$expr->value->name;
+    }
             
     else if ($expr instanceof Node\Expr\Array_) {
-
+        echo "array();\n";
     }
 
     else if ($expr instanceof Node\Expr\Assign) {
         print_expr($expr->var);
         echo " = ";
-        print_expr($expr->Expr);
-        return do_assign($expr->var, $expr->expr, $sym_table);
+        print_expr($expr->expr);
+        
     }
 
     // else if ($expr instanceof Node\Expr\AssignRef) {
@@ -658,7 +701,6 @@ function print_expr($expr) {
 }
 
 function print_stmts($stmts) {
-    pp($stmts);
     foreach($stmts as $stmt) {
         if ($stmt instanceof Node\Expr) {
             print_expr($stmt);
