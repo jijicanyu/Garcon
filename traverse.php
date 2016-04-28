@@ -39,15 +39,18 @@ $stmts = $parser->parse($code);
 $tainted_vars = [];
 $alias_map = [];
 
-$sources['array'] = ['_GET'=>1, '_POST'=>1, '_COOKIE'=>1, '_ENV'=>1];
-$sources['func'] = ['file_get_contents'=>1, 'mysql_fetch_row'=>1];
-$sources['method'] = ['mysqli::query'=>1];
+$sources['input'] = ['_GET'=>1, '_POST'=>1, '_COOKIE'=>1, '_ENV'=>1];
+$sources['database'] = ['file_get_contents'=>1, 'mysql_fetch_row'=>1];
+//$sources['method'] = ['mysqli::query'=>1];
 
 
 $sinks['sql'] = ['pg_query'=>1, 'mysql_query'=>1, 'mysqli::query'=>1];
 $sinks['cmd'] = ['system'=>1];
+$sinks['xss'] = ['print_'=>1];
 $user_funcs = []; // a map of user defined functions
-$sani_funcs = ['str_replace'=>1, 'preg_replace'=>1];
+$sani_funcs['sql'] = ['escape_sql_string'=>1];
+$sani_funcs['cmd'] = ['htmlspecialchars'=>1];                 
+                   
 
 $cond_mode = 0;
 
@@ -321,17 +324,6 @@ function gen_callee_table($args, $func_proto, $caller_table) {
     return $newtable;
 }
 
-// function check_var($name, $sym_table) {
-//     global $alias_map;
-//     pp("check var $name");
-//     if (array_key_exists($name, $sym_table)) {
-//         return $sym_table[$name];
-//     }
-//     else {
-//         return new TaintInfo(0, 1);
-//     }    
-// }
-
 function get_alias($name) {
     global $alias_map;
     $target = $name;
@@ -372,6 +364,9 @@ function is_sink($func_name) {
     else if (array_key_exists($func_name, $sinks['cmd'])) {
         return 2;
     }
+    else if (array_key_exists($func_name, $sinks['xss'])) {
+        return 4;
+    }
     else {
         return false;
     }
@@ -389,15 +384,15 @@ function is_args_tainted($args, $sym_table) {
 
 function is_source($name) {
     global $sources;
-    if (array_key_exists($name, $sources['array'])) {
+    if (array_key_exists($name, $sources['input'])) {
         return 1;
     }
-    else if (array_key_exists($name, $sources['func'])) {
+    else if (array_key_exists($name, $sources['database'])) {
         return 2;
     }
-    else if (array_key_exists($name, $sources['method'])) {
-        return 4;
-    }
+    // else if (array_key_exists($name, $sources['method'])) {
+    //     return 4;
+    // }
     else {
         return 0;
     }
@@ -405,8 +400,23 @@ function is_source($name) {
 
 function is_sanitize($name) {
     global $sani_funcs;
-    if (array_key_exists($name, $sani_funcs)) {
+    if (array_key_exists($name, $sani_funcs['sql'])) {
         return 1;
+    }
+    else if (array_key_exists($name, $sani_funcs['cmd'])) {
+        return 2;
+    }
+    else {
+        return 0;
+    }
+}
+
+function get_vul_type($source, $sink) {
+    if ($source == 1 && ($sink == 1 || $sink == 2)) {
+        return -$sink;
+    }
+    else if ($source == 2 && $sink == 4) {
+        return -$sink;
     }
     else {
         return 0;
@@ -419,12 +429,8 @@ function eval_func($func_name, $args, &$sym_table) {
     $sink_type = is_sink($func_name);
     if ($sink_type != 0) {
         $taint_info = is_args_tainted($args, $sym_table);
-        if ($taint_info->value)
-        {
-            return new TaintInfo(-$sink_type, $taint_info->certainty);
-        }
-        return new TaintInfo(0, 1);
-        
+        $vul = get_vul_type($taint_info->value, $sink_type);
+        return new TaintInfo($vul, $taint_info->certainty);
     }
     else if ($source_type != 0) {
         return new TaintInfo($source_type, 1);
@@ -437,10 +443,9 @@ function eval_func($func_name, $args, &$sym_table) {
     }
     /* if built-in function */
     else {
-        pp("built-in: $func_name");
-        if (is_sanitize($func_name) > 0) {
-            return new TaintInfo(0, 1);
-        }
+        // if (is_sanitize($func_name) > 0) {
+        //     return new TaintInfo(0, 1);
+        // }
         /* special cases */
         if ($func_name == "array_push") {
             $v = eval_expr($args[1], $sym_table);
@@ -449,7 +454,20 @@ function eval_func($func_name, $args, &$sym_table) {
             return $v;
         }
         else {
-            return is_args_tainted($args, $sym_table);
+            $info = clone is_args_tainted($args, $sym_table);
+            $taint_type = $info->value;
+            $sani_type = is_sanitize($func_name);
+            if ($taint_type > 0) {
+                if ($sani_type == $taint_type) {
+                    return new TaintInfo(0, 1);
+                }
+                else {
+                    return $info;
+                }
+            }
+            else {
+                return new TaintInfo(0, 1);
+            }
         }        
     }
 }
@@ -529,7 +547,6 @@ function eval_expr($expr, &$sym_table) {
     else if ($expr instanceof Node\Expr\FuncCall) {
         pp("evaluate funcCall {$expr->name->parts[0]}...");
         $func_name = $expr->name->parts[0];
-
         $v = eval_func($func_name, $expr->args, $sym_table);
         $expr->setAttribute("tainted", clone $v);
     }
@@ -574,6 +591,12 @@ function eval_expr($expr, &$sym_table) {
         }
         else if ($return_info->value == -2) {
             echo "Command line injection vulnerability found in line {$expr->getline()}, certainty: {$percent_certainty}\n";
+        }
+        else if ($return_info->value == -4) {
+            echo "Persistent XSS vulnerability found in line {$expr->getline()}, certainty: {$percent_certainty}\n";
+        }
+        else {
+            echo "Other type of vulnerability found in line {$expr->getline()}, certainty: {$percent_certainty}\n";
         }
     }  
     return $expr->getAttribute("tainted");
