@@ -47,7 +47,7 @@ $sources['method'] = ['mysqli::query'=>1];
 $sinks['sql'] = ['pg_query'=>1, 'mysql_query'=>1, 'mysqli::query'=>1];
 $sinks['cmd'] = ['system'=>1];
 $user_funcs = []; // a map of user defined functions
-$sani_funcs = ['str_replace', 'preg_replace'];
+$sani_funcs = ['str_replace'=>1, 'preg_replace'=>1];
 
 $cond_mode = 0;
 
@@ -403,6 +403,16 @@ function is_source($name) {
     }
 }
 
+function is_sanitize($name) {
+    global $sani_funcs;
+    if (array_key_exists($name, $sani_funcs)) {
+        return 1;
+    }
+    else {
+        return 0;
+    }
+}
+
 function eval_func($func_name, $args, &$sym_table) {
     global $user_funcs;
     $source_type = is_source($func_name);
@@ -427,6 +437,10 @@ function eval_func($func_name, $args, &$sym_table) {
     }
     /* if built-in function */
     else {
+        pp("built-in: $func_name");
+        if (is_sanitize($func_name) > 0) {
+            return new TaintInfo(0, 1);
+        }
         /* special cases */
         if ($func_name == "array_push") {
             $v = eval_expr($args[1], $sym_table);
