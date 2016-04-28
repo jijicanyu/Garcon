@@ -47,6 +47,7 @@ $sources['method'] = ['mysqli::query'=>1];
 $sinks['sql'] = ['pg_query'=>1, 'mysql_query'=>1, 'mysqli::query'=>1];
 $sinks['cmd'] = ['system'=>1];
 $user_funcs = []; // a map of user defined functions
+$sani_funcs = ['str_replace', 'preg_replace'];
 
 $cond_mode = 0;
 
