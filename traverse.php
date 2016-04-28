@@ -58,8 +58,8 @@ foreach($stmts as $stmt) {
 }
 do_statements($stmts, $tainted_vars);
 pp($code);
-pp($tainted_vars);
-print_stmts($stmts);
+//pp($tainted_vars);
+//print_stmts($stmts);
 fclose($log);
 
 function get_left_side_name($expr) {
@@ -82,7 +82,7 @@ function get_left_side_name($expr) {
     }
     else {
         echo "unsupported left side value\n";
-        pp($expr);
+        //pp($expr);
     }
 }
 
@@ -101,6 +101,7 @@ function get_left_side_name($expr) {
 // }
 
 function union_tables($t1, $t2) {
+    pp("union tables");
     $keys1 = array_keys($t1);
     $keys2 = array_keys($t2);
     $allkeys = array_unique(array_merge($keys1, $keys2));
@@ -111,7 +112,7 @@ function union_tables($t1, $t2) {
             /* if exists in $t1 and $t2 */
             if (array_key_exists($k, $t2)) {
                 $t1[$k]->certainty += $t2[$k]->certainty;
-                $newtable[$k] = $t1[$k];
+                $newtable[$k] = clone $t1[$k];
             }
             /* if only exists in $t1 */
             else {
@@ -123,6 +124,7 @@ function union_tables($t1, $t2) {
             $newtable[$k] = $t2[$k];
         }
     }
+    //pp($newtable);
     return $newtable;
 }
 
@@ -178,7 +180,7 @@ function do_assign($left, $right, &$sym_table) {
     $left_name = get_left_side_name($left);
     $taint_info = eval_expr($right, $sym_table);
     if ($taint_info->value > 0) {
-        $left->setAttribute("tainted", $taint_info);
+        $left->setAttribute("tainted", clone $taint_info);
         set_var($left,$sym_table);
 
         // if ($right instanceof Node\Expr\ArrayDimFetch) {
@@ -245,7 +247,8 @@ function do_statements($func_stmts, &$sym_table) {
         /* ignore ifelse for now */
         else if ($stmt instanceof Node\Stmt\If_) {
             $out_table = $sym_table;
-            
+            pp("out table:");
+            pp($sym_table);
             $cond_mode += 1;
             do_statements($stmt->stmts, $sym_table);
             $table1 = $sym_table;
@@ -255,8 +258,8 @@ function do_statements($func_stmts, &$sym_table) {
                 $sym_table = union_tables($table1, $table2);
             }
             $cond_mode -= 1;
-
-            $sym_table = augment_table($out_table, $sym_table, 0.5);
+            $confid = calc_confidence($stmt->cond);
+            $sym_table = augment_table($out_table, $sym_table, $confid);
         }
         
         else if ($stmt instanceof Node\Stmt\While_) {
@@ -351,7 +354,7 @@ function get_var($name, $sym_table) {
 function set_var($left, &$sym_table) {
     $name = get_left_side_name($left);
     $target = get_alias($name);
-    $sym_table[$target] = $left->getAttribute("tainted");
+    $sym_table[$target] = clone $left->getAttribute("tainted");
     
 }
 
@@ -441,7 +444,7 @@ function eval_expr($expr, &$sym_table) {
 
     if ($expr instanceof Node\Expr\Variable) {
         pp("evaluate var {$expr->name}...");
-        $expr->setAttribute("tainted", get_var($expr->name, $sym_table));
+        $expr->setAttribute("tainted", clone get_var($expr->name, $sym_table));
     }
     else if ($expr instanceof Node\Scalar\LNumber) {
         pp("evaluate lnumber {$expr->value}...");
@@ -469,7 +472,7 @@ function eval_expr($expr, &$sym_table) {
     else if ($expr instanceof Node\Expr\PropertyFetch) {
         pp("evaluate propertyfetch...");
         $name = get_left_side_name($expr);
-        $expr->setAttribute("tainted", get_var($name, $sym_table));
+        $expr->setAttribute("tainted", clone get_var($name, $sym_table));
     }
 
     else if ($expr instanceof Node\Expr\BinaryOp) {
@@ -477,10 +480,10 @@ function eval_expr($expr, &$sym_table) {
         $left_v = eval_expr($expr->left, $sym_table);
         $right_v = eval_expr($expr->right, $sym_table);
         if ($left_v->value) {
-            $expr->setAttribute("tainted", $left_v);
+            $expr->setAttribute("tainted", clone $left_v);
         }
         else if ($right_v->value) {
-            $expr->setAttribute("tainted", $right_v);
+            $expr->setAttribute("tainted", clone $right_v);
         }
         else {
             $expr->setAttribute("tainted", new TaintInfo(0, 1));
@@ -513,7 +516,7 @@ function eval_expr($expr, &$sym_table) {
         $func_name = $expr->name->parts[0];
 
         $v = eval_func($func_name, $expr->args, $sym_table);
-        $expr->setAttribute("tainted", $v);
+        $expr->setAttribute("tainted", clone $v);
     }
 
     else if ($expr instanceof Node\Expr\MethodCall) {
@@ -526,7 +529,7 @@ function eval_expr($expr, &$sym_table) {
     else if ($expr instanceof Node\Arg) {
         pp("evaluate arg $expr_type");
         $v = eval_expr($expr->value, $sym_table);
-        $expr->setAttribute("tainted", $v);
+        $expr->setAttribute("tainted", clone $v);
     }
             
     else if ($expr instanceof Node\Expr\Array_) {
@@ -696,7 +699,7 @@ function print_expr($expr) {
     
     else {
         echo "unsupported expr type\n";
-        pp($expr);
+        //pp($expr);
     }
 }
 

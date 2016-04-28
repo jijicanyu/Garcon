@@ -23,11 +23,11 @@ $result = pg_query($conn, $query2);
 
 
 
-// $b = $argv[0];
-// $a = (1+2-1)."$b bar";
-// $c = substr(strtolower($a)."lower", 1);
-// pg_query($c);
-//pg_query(f2(($a+1*2)."some"));
+$b = $argv[0];
+$a = (1+2-1)."$b bar";
+$c = substr(strtolower($a)."lower", 1);
+pg_query($c);
+pg_query(f2(($a+1*2)."some"));
 
 
 
