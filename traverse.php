@@ -49,7 +49,8 @@ $sinks['cmd'] = ['system'=>1];
 $sinks['xss'] = ['print_'=>1];
 $user_funcs = []; // a map of user defined functions
 $sani_funcs['sql'] = ['escape_sql_string'=>1];
-$sani_funcs['cmd'] = ['htmlspecialchars'=>1];                 
+$sani_funcs['cmd'] = ['escapeshellcmd'=>1];
+$sani_funcs['xss'] = ['htmlspecialchars'=>1];                 
                    
 
 $cond_mode = 0;
@@ -90,6 +91,14 @@ function get_left_side_name($expr) {
     }
 }
 
+function deep_copy_assoc_arr($arr) {
+    $newarray = [];
+    foreach ($arr as $k=>$v) {
+        $newarray[$k] = clone $v;
+    }
+    return $newarray;
+}
+
 /* deprecated union strategy */
 // function union_tables($t1, $t2) {
 //     foreach($t1 as $e1=>$obj1) {
@@ -106,6 +115,8 @@ function get_left_side_name($expr) {
 
 function union_tables($t1, $t2) {
     pp("union tables");
+    pp($t1);
+    pp($t2);
     $keys1 = array_keys($t1);
     $keys2 = array_keys($t2);
     $allkeys = array_unique(array_merge($keys1, $keys2));
@@ -250,20 +261,48 @@ function do_statements($func_stmts, &$sym_table) {
         }
         /* ignore ifelse for now */
         else if ($stmt instanceof Node\Stmt\If_) {
+            // $out_table = $sym_table;
+            // $confid = calc_confidence($stmt->cond);
+            // $cond_mode += 1;
+            // /* if branch */
+            // do_statements($stmt->stmts, $sym_table);
+            // $table1 = $sym_table;
+            // /* else branch */
+            // if (is_null($stmt->else) != true) {
+            //     do_statements($stmt->else->stmts, $sym_table);
+            //     $table2 = $sym_table;
+            //     $sym_table = union_tables($table1, $table2);
+            // }
+            // $cond_mode -= 1;
+
+            // $sym_table = augment_table($out_table, $sym_table, 0.5);
             $out_table = $sym_table;
-            pp("out table:");
-            pp($sym_table);
-            $cond_mode += 1;
-            do_statements($stmt->stmts, $sym_table);
-            $table1 = $sym_table;
-            if (is_null($stmt->else) != true) {
-                do_statements($stmt->else->stmts, $sym_table);
-                $table2 = $sym_table;
-                $sym_table = union_tables($table1, $table2);
-            }
-            $cond_mode -= 1;
             $confid = calc_confidence($stmt->cond);
-            $sym_table = augment_table($out_table, $sym_table, $confid);
+            if (is_null($stmt->else) == true || $confid == 1) {
+                /* if branch */
+                do_statements($stmt->stmts, $sym_table);
+                $sym_table = augment_table($out_table, $sym_table, $confid);
+            }
+            else {
+                if ($confid == 0) {
+                    do_statements($stmt->else->stmts, $sym_table);
+                    $sym_table = augment_table($out_table, $sym_table, $confid);
+                }
+                else {
+                    $table1 = deep_copy_assoc_arr($sym_table);
+                    $table2 = deep_copy_assoc_arr($sym_table);
+                    do_statements($stmt->stmts, $table1);
+                   
+                    do_statements($stmt->else->stmts, $table2);
+                    
+                    $sym_table = union_tables($table1, $table2);
+                    pp("out table:");
+                    pp($out_table);
+                    pp("inner:");
+                    pp($sym_table);
+                    $sym_table = augment_table($out_table, $sym_table, $confid);
+                }
+            }
         }
         
         else if ($stmt instanceof Node\Stmt\While_) {
@@ -303,7 +342,6 @@ function gen_callee_table($args, $func_proto, $caller_table) {
     $newtable = [];
     $params = $func_proto->params;
     for ($i = 0; $i < count($params); $i++) {
-
         $left = $params[$i];
         $right = $args[$i];
         $taint_info = eval_expr($right, $caller_table);
@@ -403,7 +441,7 @@ function is_sanitize($name) {
     if (array_key_exists($name, $sani_funcs['sql'])) {
         return 1;
     }
-    else if (array_key_exists($name, $sani_funcs['cmd'])) {
+    else if (array_key_exists($name, $sani_funcs['cmd'])) {        
         return 2;
     }
     else {
@@ -457,8 +495,10 @@ function eval_func($func_name, $args, &$sym_table) {
             $info = clone is_args_tainted($args, $sym_table);
             $taint_type = $info->value;
             $sani_type = is_sanitize($func_name);
+            
             if ($taint_type > 0) {
-                if ($sani_type == $taint_type) {
+                $vul = get_vul_type($taint_type, $sani_type);
+                if ($vul != 0) {
                     return new TaintInfo(0, 1);
                 }
                 else {
