@@ -1,0 +1,14 @@
+[dependencies]
+php-parser (https://github.com/nikic/PHP-Parser)
+$ php composer.phar require nikic/php-parser
+
+[usage]
+$ ./traverse.php < input/1.php
+to suppress debug information:
+$ ./traverse.php < input/1.php 2> /dev/null
+
+[directory]
+traverse.php is the actual program
+test files are in input/
+demo files are in demo/
+all other files are either for test or composer's file
