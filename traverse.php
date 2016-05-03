@@ -328,6 +328,7 @@ function do_statements($func_stmts, &$sym_table) {
             $confid = calc_confidence($stmt->cond);
             $out_table = $sym_table;
             do_statements($stmt->stmts, $sym_table);
+            do_statements($stmt->stmts, $sym_table);
             $sym_table = augment_table($out_table, $sym_table, $confid);
 
             // /* condition is always true, not condition mode for while */
