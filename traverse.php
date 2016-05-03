@@ -70,6 +70,7 @@ pp($code);
 fclose($log);
 
 function get_left_side_name($expr) {
+    global $classes;
     if ($expr instanceof Node\Expr\Variable) {
         return $expr->name;
     }
@@ -78,7 +79,9 @@ function get_left_side_name($expr) {
         return $expr->var->name;
     }
     else if ($expr instanceof Node\Expr\PropertyFetch) {
-        return $expr->var->name."::".$expr->name;
+        $class_name = $expr->var->name;
+        $classes[$class_name] = 1;
+        return constr_prop_name($class_name, $expr->name);
     }
     else if ($expr instanceof Node\Arg) {
         //return $expr->var->name . $expr->dim->value;
@@ -194,6 +197,20 @@ function augment_table($out, $in, $confidence) {
 }
 
 function do_assign($left, $right, &$sym_table) {
+    global $classes_assign_map, $classes;
+    /* special case for simple class assignment */
+    if ($right instanceof Node\Expr\Variable) {
+        if ($left instanceof Node\Expr\Variable) {
+            if (array_key_exists($right->name, $classes)) {
+                $classes[$left->name] = 1;
+                $classes_assign_map[$left->name] = $right->name;
+            }
+        }
+        else {
+            /* ignore for now */
+        }
+    }
+    
     $left_name = get_left_side_name($left);
     $taint_info = eval_expr($right, $sym_table);
     if ($taint_info->value > 0) {
@@ -370,7 +387,17 @@ function get_alias($name) {
     while (array_key_exists($target, $alias_map)) {
         $target = $alias_map[$target];
     }
-    pp("$name's alias is $target...");
+    pp("var $name's alias is $target...");
+    return $target;
+}
+
+function resolve_class_assign($name) {
+    global $classes_assign_map;
+    $target = $name;
+    while (array_key_exists($target, $classes_assign_map)) {
+        $target = $classes_assign_map[$target];
+    }
+    pp("class $name's alias is $target...");
     return $target;
 }
 
@@ -514,7 +541,12 @@ function eval_func($func_name, $args, &$sym_table) {
     }
 }
 
+function constr_prop_name($class_name, $prop) {
+    return "$class_name::$prop";
+}
+
 function eval_expr($expr, &$sym_table) {
+    global $classes;
     $expr_type = get_class($expr);
 
     if ($expr instanceof Node\Expr\Variable) {
@@ -546,7 +578,13 @@ function eval_expr($expr, &$sym_table) {
 
     else if ($expr instanceof Node\Expr\PropertyFetch) {
         pp("evaluate propertyfetch...");
-        $name = get_left_side_name($expr);
+        $resolved_name = resolve_class_assign($expr->var->name);
+        pp("resolved class: $resolved_name");
+        
+        $name = constr_prop_name($resolved_name, $expr->name);
+        pp("resolved var: $name");
+        // $name = get_left_side_name($expr);
+        $classes[$expr->var->name] = 1;
         $expr->setAttribute("tainted", clone get_var($name, $sym_table));
     }
 
