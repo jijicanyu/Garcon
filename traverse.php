@@ -1,6 +1,7 @@
 #!/usr/bin/env php
 <?php
 require './vendor/autoload.php';
+require 'symbolTable.php';
 use PhpParser\Error;
 use PhpParser\NodeTraverser;
 use PhpParser\ParserFactory;
