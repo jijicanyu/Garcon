@@ -6,8 +6,18 @@ class Condition {
     public $expr;
     public $value;
     public $relation = "==";
+    public $true = NULL;
+    public $false = NULL;
 
     public function toString() {
+        if ($this->true) {
+            return "true";
+        }
+
+        if ($this->false) {
+            return "false";
+        }
+        
         $expr_str = get_stmt_str($this->expr);
         $expr_str = str_replace(";", "", $expr_str);
         if (is_string($this->value)) {
@@ -53,19 +63,71 @@ class Condition {
     }
     
     public function setNot() {
-        if ($this->relation == "==") {
-            $this->relation = "!=";
+        if ($this->true) {
+            $this->setAlwaysFalse();
+        }
+        else if ($this->false) {
+            $this->setAlwaysTrue();
         }
         else {
-            $this->relation = "==";
+            if ($this->relation == "==") {
+                $this->relation = "!=";
+            }
+            else {
+                $this->relation = "==";
+            }
         }
+        
     }
 
     public function evaluate() {
 
     }
     
+    public function concatCondition($c, $op) {
+        $new = new CompoundCondition($this, $c, $op);
+        return $new;
+    }
     
+    public function setAlwaysTrue() {
+        $this->true = true;
+        $this->false = false;
+    }
+    
+    public function isAlwaysTrue() {
+        if ($this->true != NULL) {
+            return $this->true;
+        }
+        else {
+            return false;
+        }
+    }
+    
+    public function isAlwaysFalse() {
+        if ($this->false != NULL) {
+            return $this->false;
+        }
+        else {
+            return false;
+        }
+    }
+    
+    public function setAlwaysFalse() {
+        $this->true = false;
+        $this->false = true;
+    }
+    
+    public function simplify() {
+        if ($this->true) {
+            return NULL;
+        }
+    }
+    
+    public function replaceValue($old, $new) {
+        if ($this->value == $old) {
+            $this->value = $new;
+        }
+    }
 }
 
 class CompoundCondition {
@@ -74,21 +136,23 @@ class CompoundCondition {
     public $op = "";
     public $right = NULL;
     
-    public function __construct(Condition $cond) {
-        $this->right = $cond;
+    public function __construct($l, $r, $op) {
+        $this->left = $l;
+        $this->right = $r;
+        $this->op = $op;
     }
 
     public function setLeft(CompoundCondition $left) {
         $this->left = $left;
     }
 
-    public function ConcatCondition(Condition $cond, $op) {
-        $new = new CompoundCondition($cond);
-        $new->setOp($op);
-        $new->setLeft($this);
+    public function concatCondition($cond, $op) {
+        $new = new CompoundCondition($this, $cond, $op);
+        return $new;
+        
     }
     
-    public function ConcatCompoundCondition(CompoundCondition $cond, $op) {
+    public function concatCompoundCondition(CompoundCondition $cond, $op) {
         
     }
 
@@ -107,23 +171,17 @@ class CompoundCondition {
     }
     
     public function setNot() {
-        if (is_null($this->op)) {
-            $this->right->setNot();
-        }
-        else {
-            $this->right->setNot();
-            $this->notOp();
-            $this->left->setNot();
-        }
+        $this->notOp();
+        $this->left->setNot();
+        $this->right->setNot();
+    }
+    
+    public function replaceValue($old, $new) {
+        $this->left->replaceValue($old, $new);
+        $this->right->replaceValue($old, $new);
     }
     
     public function toString() {
-        if (is_null($this->left)) {
-            return $this->right->toString();
-        }
-        else {
-            $right_str = $this->right->toString();
-            return "({$this->left->toString()} $this->op $right_str)";
-        }
+        return "({$this->left->toString()} $this->op {$this->right->toString()})";
     }
 }

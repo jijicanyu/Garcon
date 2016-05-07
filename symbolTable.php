@@ -27,13 +27,46 @@ class SymbolTable {
         $this->cls_table = deep_copy_arr($this->cls_table);
     }
     
-    public function addStr($var, $info) {
+//    public function addStr($var, $info) {
+//        $target = $this->resolveStrAlias($var);
+//        if ($info->isTainted()) {
+//            $this->str_table[$target] = clone $info;
+//        }
+//        else {
+//            unset($this->str_table[$target]);
+//        }
+//    }
+
+    public function setStr($var, $info) {
         $target = $this->resolveStrAlias($var);
-        if ($info->isTainted()) {
-            $this->str_table[$target] = clone $info;
+        $this->str_table[$target] = clone $info;
+    }
+    
+    public function isInStrTable($var) {
+        return array_key_exists($var, $this->str_table);
+    }
+    
+    public function mergeStr($var, $info) {
+        $target = $this->resolveStrAlias($var);
+        if ($this->isInStrTable($target)) {
+            if ($info->isTainted()) {
+                $info->setTaintCondition($this->getBranchCondition());
+                $this->getStr($target)->merge(clone $info, "or");
+            }
+            else {
+                // $info->negateTaintCondition();
+                $info_cond = clone $this->getBranchCondition();
+                $info_cond->setNot();
+                $this->getStr($target)->addTaintCondition($info_cond, "and");
+            }
         }
+        
         else {
-            unset($this->str_table[$target]);
+            if ($info->isTainted()) {
+                $info->setTaintCondition($this->getBranchCondition());
+                $this->setStr($var, $info);
+            }
+
         }
     }
     
@@ -73,15 +106,32 @@ class SymbolTable {
     }
 
     public function getBranchCondition() {
-        return $this->branch_condition;
+        if (empty($this->branch_condition)) {
+            $true_cond = new Condition();
+            $true_cond->setAlwaysTrue();
+            return $true_cond;
+        }
+        else {
+            $first = $this->branch_condition[0];
+            for ($i = 1; $i < count($this->branch_condition); $i++) {
+                $c = $this->branch_condition[$i]; 
+                $first = $first->concatCondition($c, "and");
+            }
+            return $first;
+        }
     }
     
+    /* below are deprecated */
     public function getLastBranchCondition() {
         return end($this->branch_condition);
     }
 
-    public function addBranchCondition($branch_condition) {
+    public function pushBranchCondition($branch_condition) {
         array_push($this->branch_condition, $branch_condition);
+    }
+    
+    public function popBranchCondition() {
+        array_pop($this->branch_condition);
     }
     
     public function mergeBranchTable($branch_table) {
@@ -148,7 +198,7 @@ class ArrayTable {
             }
             else {
                 $new = clone $this->pending_taint;
-                $new->replaceTaintCondValue($name);
+                $new->replaceTaintCondValue("pending", $name);
                 return $new;
             }
         }
@@ -162,21 +212,21 @@ class ArrayTable {
             $cond->setExpr($expr);
             $cond->setValue($k);
             $uncertain_info = clone $info;
-            $uncertain_info->addTaintCondition($cond);
-            $v->merge($uncertain_info);
+            $uncertain_info->addTaintCondition($cond, "and");
+            $v->merge($uncertain_info, "or");
         }
                 
         $cond = new Condition();
         $cond->setExpr($expr);
         $cond->setValue("pending");
         $uncertain_info = clone $info;
-        $uncertain_info->addTaintCondition($cond);
+        $uncertain_info->addTaintCondition($cond, "and");
         
         if (is_null($this->pending_taint)) {
             $this->pending_taint = $uncertain_info;
         }
         else {
-            $this->pending_taint->merge($uncertain_info);
+            $this->pending_taint->merge($uncertain_info, "or");
         }
     }
     

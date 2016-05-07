@@ -75,7 +75,7 @@ function do_assign($left, $right, &$sym_table) {
     // @new
     $info = eval_expr($right, $sym_table);
     if ($left instanceof Node\Expr\Variable) {
-        $sym_table->addStr($left->name, $info);
+        $sym_table->mergeStr($left->name, $info);
         $left->setAttribute("tainted", clone $info);
     }
 
@@ -121,6 +121,8 @@ function get_array_taint_info($expr, $sym_table) {
     }
     else {
         // todo
+        echo "You hit an unimplemented feature!!";
+        exit(1);
     }
 }
 
@@ -140,23 +142,18 @@ function do_statements($func_stmts, &$sym_table) {
             continue;
         }
         else if ($stmt instanceof Node\Stmt\If_) {
-            $if_table = clone $sym_table;
             $cond = new Condition();
             $cond->setExpr($stmt->cond);
             $cond->setValue(true);
-            $if_table->addBranchCondition($cond);
-            do_statements($stmt->stmts, $if_table);
-            $sym_table->mergeBranchTable($if_table);
+            $sym_table->pushBranchCondition(clone $cond);
+            do_statements($stmt->stmts, $sym_table);
+            $sym_table->popBranchCondition();
 
             if (is_null($stmt->else) == false) {
-                $else_table = clone $sym_table;
-                $cond = new Condition();
-                $cond->setExpr($stmt->cond);
                 $cond->setValue(false);
-                $else_table->addBranchCondition($cond);
-                do_statements($stmt->else->stmts, $else_table);
-                // $if_table->mergeElseTable($else_table);
-                $sym_table->mergeBranchTable($else_table);
+                $sym_table->pushBranchCondition(clone $cond);
+                do_statements($stmt->else->stmts, $sym_table);
+                $sym_table->popBranchCondition();
             }
 
         }
@@ -242,7 +239,7 @@ function eval_func($func_name, $args, &$sym_table) {
         $newInfo = new TaintInfo();
         $t = new SingleTaint();
         $t->setType($source_type);
-        $newInfo->addTaint($t);
+        $newInfo->addSingleTaint($t);
         return $newInfo;
     }
     /* if user defined function */
@@ -393,6 +390,8 @@ function eval_expr($expr, &$sym_table) {
         echo "unsupported expr type: $expr_type\n";
         pp($expr);
     }
+
+    
 
     $expr->setAttribute("tainted", clone $info);
     return clone $info;

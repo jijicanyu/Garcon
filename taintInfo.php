@@ -24,11 +24,23 @@ class TaintInfo {
 
     public function addTaintCondition($cond, $op) {
         foreach ($this->taint_list as $t) {
-            $t->addCondition($cond);
+            $t->addCondition($cond, $op);
+        }
+    }
+    
+    public function setTaintCondition($cond) {
+        foreach ($this->taint_list as $t) {
+            $t->setCondition($cond);
+        }
+    }
+    
+    public function negateTaintCondition() {
+        foreach ($this->taint_list as $item) {
+            $item->negateCondition();
         }
     }
 
-    public function merge($info) {
+    public function merge($info, $op) {
         foreach ($info->getTaintList() as $i) {
             if ($this->isTaintTypeExist($i->type) == false) {
                 $this->addSingleTaint($i);
@@ -36,7 +48,7 @@ class TaintInfo {
             else {
                 foreach ($this->taint_list as $j) {
                     if ($i->type == $j->type) {
-                        $j->merge($i);
+                        $j->merge($i, $op);
                         break;
                     }
                     
@@ -45,11 +57,11 @@ class TaintInfo {
         }
     }
     
-//    public function replaceTaintCondValue($v) {
-//        foreach ($this->taint_list as $t) {
-//            $t->replaceCondValue($v);
-//        }
-//    }
+    public function replaceTaintCondValue($old, $new) {
+        foreach ($this->taint_list as $t) {
+            $t->replaceCondValue($old, $new);
+        }
+    }
 
     public function addSingleTaint($t) {
         array_push($this->taint_list, clone $t);
@@ -80,8 +92,8 @@ class TaintInfo {
     }
 
     public function checkVul($sink, $lineno, $sym_table) {
-        $sani_conds = [];
-        $taint_conds = [];
+        $sani_conds = NULL;
+        $taint_conds = NULL;
         $branch_conds = $sym_table->getBranchCondition();
         $vul = "";
         
@@ -111,39 +123,31 @@ class TaintInfo {
             } else if ($source == 2 && $sink == 4) {
                 $vul = "Persisted XSS";
             } else {
-                $vul = "Other type of";
+                continue;
             }
-            
+
+            $branch_conds = $branch_conds->simplify();
             if ($vul != "") {
-                $taint_conds = $t->getConditions();
-                echo "There could be $vul vulnerability at line $lineno" . PHP_EOL;
-                if (empty($branch_conds) == false) {
+                $taint_conds = $t->getCondition();
+                echo "There is a $vul vulnerability at line $lineno" . PHP_EOL;
+                if (is_null($branch_conds) == false) {
                     echo "When the branch conditions is satisfied:" . PHP_EOL;
-                    $this->printConditions($branch_conds);
+                    echo $branch_conds->toString() . PHP_EOL;
                 }
 
-                if (empty($sani_conds) == false) {
+                if (is_null($sani_conds) == false) {
                     echo "When the sanitizing conditions is not satisfied:" . PHP_EOL;
-                    $this->printConditions($sani_conds);
-
+                    echo $sani_conds->toString() . PHP_EOL;
                 }
 
-                if (empty($taint_conds) == false) {
+                if (is_null($taint_conds) == false) {
                     echo "When the taint conditions is satisfied:" . PHP_EOL;
-                    $this->printConditions($taint_conds);
+                    echo $taint_conds->toString() . PHP_EOL;
                 }
                 return true;
             }
         }
         
-    }
-    
-    public function printConditions($conds) {
-        $strs = [];
-        foreach ($conds as $c) {
-            array_push($strs, $c->toString());
-        }
-        echo implode(" or ", $strs) . PHP_EOL;
     }
 
     public function __clone() {
@@ -166,42 +170,63 @@ class SingleTaint {
         $this->type = $type;
     }
 
-    public function addCondition(Condition $c, $op) {
+    public function addCondition($c, $op) {
         if (is_null($this->condition)) {
             if ($op == "or") {
                 /* some condition || NULL condition = NULL
                 /* remain NULL */
             }
             else {
-                $this->condition = new CompoundCondition($c);
+                $this->condition = $c;
             }
         }
         
+        else {
+            if ($this->condition instanceof Condition) {
+                $this->condition = $this->condition->concatCondition($c, $op);
+            }
+            else if ($this->condition instanceof CompoundCondition) {
+                $this->condition = $this->condition->concatCondition($c, $op);
+            }
+            else {
+                /* shouldn't be here */
+                assert(false, "condition should either be a Condition object or CompounCondition object");
+            }
+        }
+    }
+    
+    public function setCondition($cond) {
+        $this->condition = $cond;
     }
 
-    public function getConditions()
+    public function getCondition()
     {
         return $this->condition;
     }
     
-//    public function replaceCondValue($v) {
-//        foreach ($this->conditions as $condition) {
-//            $condition->setValue($v);
-//        }
-//    }
+    public function negateCondition() {
+        $this->condition = $this->condition->setNot();
+    }
     
-    public function merge($new) {
-        assert($this->type == $new->type);
-        if ($this->isNoCondition() || $new->isNoCondition()) {
-            $this->conditions = [];
+    public function replaceCondValue($old, $new) {
+        $this->condition->replaceValue($old, $new);
+    }
+    
+    public function merge($info, $op) {
+        assert($this->type == $info->type);
+        if ($this->isNoCondition() || $info->isNoCondition()) {
+            $this->condition = NULL;
         }
         else {
-            $this->conditions = array_merge($this->conditions, $new->getConditions());
+            $c1 = $this->getCondition();
+            $c2 = $info->getCondition();
+            $new = $c1->concatCondition($c2, $op);
+            $this->setCondition($new);
         }
     }
     
     public function isNoCondition() {
-        return empty($this->conditions);
+        return empty($this->condition);
     }
 }
 
