@@ -26,20 +26,18 @@ class SymbolTable {
         $this->arr_table = deep_copy_arr($this->arr_table);
         $this->cls_table = deep_copy_arr($this->cls_table);
     }
-    
-//    public function addStr($var, $info) {
-//        $target = $this->resolveStrAlias($var);
-//        if ($info->isTainted()) {
-//            $this->str_table[$target] = clone $info;
-//        }
-//        else {
-//            unset($this->str_table[$target]);
-//        }
-//    }
 
     public function setStr($var, $info) {
         $target = $this->resolveStrAlias($var);
         $this->str_table[$target] = clone $info;
+    }
+
+    public function isInArrTable($var) {
+        return array_key_exists($var, $this->arr_table);
+    }
+
+    public function isInClsTable($var) {
+        return array_key_exists($var, $this->cls_table);
     }
     
     public function isInStrTable($var) {
@@ -69,6 +67,27 @@ class SymbolTable {
         }
     }
     
+    public function strTableReplaceKey($old, $new) {
+        if (array_key_exists($old, $this->str_table)) {
+            $this->str_table[$new] = $this->str_table[$old];
+            unset($this->str_table[$old]);
+        }
+    }
+
+    public function arrTableReplaceKey($old, $new) {
+        if (array_key_exists($old, $this->arr_table)) {
+            $this->arr_table[$new] = $this->arr_table[$old];
+            unset($this->arr_table[$old]);
+        }
+    }
+
+    public function clsTableReplaceKey($old, $new) {
+        if (array_key_exists($old, $this->cls_table)) {
+            $this->cls_table[$new] = $this->cls_table[$old];
+            unset($this->cls_table[$old]);
+        }
+    }
+    
     public function getStr($var) {
         $target = $this->resolveStrAlias($var);
         if (array_key_exists($target, $this->str_table)) {
@@ -83,6 +102,57 @@ class SymbolTable {
         }
         return $this->arr_table[$arr];
     }
+
+    public function getClassTable($cls) {
+        if (array_key_exists($cls, $this->cls_table) == false) {
+            $this->cls_table[$cls] = new ClassTable();
+            $this->registerClass($cls);
+        }
+        return $this->cls_table[$cls];
+    }
+    
+    
+    
+    public function registerClass($name) {
+        if (!in_array($name, $this->classes)) {
+            array_push($this->classes, $name);
+        }
+        
+    }
+    
+    public function invalidateClassMap($name) {
+        $unset_entry = [];
+        foreach ($this->classes_assign_map as $k=>$v) {
+            if ($v == $name) {
+                $this->cls_table[$k] = clone $this->cls_table[$v];
+                array_push($unset_entry, $k);
+            }
+        }
+        foreach ($unset_entry as $u) {
+            unset($this->classes_assign_map[$u]);
+        }
+        
+        unset($this->cls_table[$name]);
+    }
+    
+    public function isClass($name) {
+        return in_array($name, $this->classes);
+    }
+    
+    public function addClassAssign($a, $b) {
+        $this->classes_assign_map[$a] = $b;
+    }
+    
+//    public function setClassTable($t) {
+//        $this->cls_table = $t;
+//    }
+    public function setSpecialClassTable() {
+        foreach ($this->cls_table as $c=>$v) {
+            $this->cls_table[$c] = $this->cls_table[$c]->getSpecialCopy();
+        }
+    }
+
+
     
     /* resolve primitive type such as string, number and boolean */
     public function resolveStrAlias($name) {
@@ -298,8 +368,54 @@ class ArrayTable {
 class ClassTable {
     public $prop_table = [];
     
+    public function isInPropTable($name) {
+        return array_key_exists($name, $this->prop_table);
+    }
+    
+    public function setProp($name, $info) {
+        $this->prop_table[$name] = $info;
+    }
+    
+    public function getProp($name) {
+        if ($this->isInPropTable($name)) {
+            return $this->prop_table[$name];
+        }
+        else {
+            return new TaintInfo();
+        }
+    }
+    
+    public function addProp($target, $info, $b_cond) {
+        if ($this->isInPropTable($target)) {
+            if ($info->isTainted()) {
+                $info->setTaintCondition($b_cond);
+                $this->getProp($target)->merge(clone $info, "or");
+            }
+            else {
+                $b_cond->setNot();
+                $this->getProp($target)->addTaintCondition($b_cond, "and");
+            }
+        }
+
+        else {
+            if ($info->isTainted()) {
+                $info->setTaintCondition($b_cond);
+                $this->setProp($target, $info);
+            }
+
+        }
+    }
+    
     public function __clone() {
-        $this->prop_table = deep_copy_arr($this->prop_table);
+        //$this->prop_table = deep_copy_arr($this->prop_table);
+    }
+    
+    public function getSpecialCopy() {
+        $new = clone $this;
+        foreach ($new->prop_table as $p=>$k) {
+            $new->prop_table[$p] = &$this->prop_table[$p];
+        }
+        return $new;
     }
 }
 ?>

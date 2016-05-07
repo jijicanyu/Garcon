@@ -4,6 +4,8 @@ require_once 'condition.php';
 use PhpParser\PrettyPrinter;
 use PhpParser\Node;
 
+$vul_count = 0;
+
 class TaintInfo {
     public $taint_list = [];
     public $sanitize_list = [];
@@ -92,6 +94,7 @@ class TaintInfo {
     }
 
     public function checkVul($sink, $lineno, $sym_table) {
+        global $vul_count;
         $sani_conds = NULL;
         $taint_conds = NULL;
         $branch_conds = $sym_table->getBranchCondition();
@@ -128,10 +131,11 @@ class TaintInfo {
 
             $branch_conds = $branch_conds->simplify();
             if ($vul != "") {
-                $taint_conds = $t->getCondition();
+                $vul_count++;
+                $taint_conds = $t->getCondition()->simplify();
                 echo "There is a $vul vulnerability at line $lineno" . PHP_EOL;
                 if (is_null($branch_conds) == false) {
-                    echo "When the branch conditions is satisfied:" . PHP_EOL;
+                    echo "When the branch(sink) conditions is satisfied:" . PHP_EOL;
                     echo $branch_conds->toString() . PHP_EOL;
                 }
 
@@ -141,7 +145,7 @@ class TaintInfo {
                 }
 
                 if (is_null($taint_conds) == false) {
-                    echo "When the taint conditions is satisfied:" . PHP_EOL;
+                    echo "When the taint(source) conditions is satisfied:" . PHP_EOL;
                     echo $taint_conds->toString() . PHP_EOL;
                 }
                 return true;

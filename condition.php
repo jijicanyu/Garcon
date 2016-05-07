@@ -8,6 +8,8 @@ class Condition {
     public $relation = "==";
     public $true = NULL;
     public $false = NULL;
+    public $round = 0;
+    public $round_str = "";
 
     public function toString() {
         if ($this->true) {
@@ -21,20 +23,20 @@ class Condition {
         $expr_str = get_stmt_str($this->expr);
         $expr_str = str_replace(";", "", $expr_str);
         if (is_string($this->value)) {
-            return "$expr_str $this->relation \"$this->value\"";
+            return "$expr_str $this->relation \"$this->value\"" . $this->round_str;
         }
         else if (is_int($this->value)) {
-            return "$expr_str $this->relation $this->value";
+            return "$expr_str $this->relation $this->value" . $this->round_str;
         }
         else if (is_bool($this->value)) {
             $bool_str = ($this->value) ? 'true' : 'false';
-            return "$expr_str $this->relation $bool_str";
+            return "$expr_str $this->relation $bool_str" . $this->round_str;
         }
         else {
             assert($this->value instanceof Node\Expr);
             $value_expr = get_stmt_str($this->value);
             $value_expr = str_replace(";", "", $value_expr);
-            return "$expr_str $this->relation $value_expr";
+            return "$expr_str $this->relation $value_expr" . $this->round_str;
         }
     }
 
@@ -60,6 +62,10 @@ class Condition {
 
     public function setRelation($relation) {
         $this->relation = $relation;
+    }
+    
+    public function setRoundStr($r) {
+        $this->round_str = " [$r]";
     }
     
     public function setNot() {
@@ -121,6 +127,9 @@ class Condition {
         if ($this->true) {
             return NULL;
         }
+        else {
+            return $this;
+        }
     }
     
     public function replaceValue($old, $new) {
@@ -179,6 +188,43 @@ class CompoundCondition {
     public function replaceValue($old, $new) {
         $this->left->replaceValue($old, $new);
         $this->right->replaceValue($old, $new);
+    }
+
+    public function simplify() {
+        // todo
+        if ($this->left instanceof Condition && $this->right instanceof Condition) {
+            if ($this->left->isAlwaysTrue()) {
+                if ($this->op == "and") {
+                    return $this->right;
+                }
+            }
+
+            if ($this->right->isAlwaysTrue()) {
+                if ($this->op == "and") {
+                    return $this->left;
+                }
+            }
+        }
+        else if ($this->left instanceof Condition) {
+            if ($this->left->isAlwaysTrue()) {
+                if ($this->op == "and") {
+                    return $this->right;
+                }
+
+            }
+        }
+        else if ($this->right instanceof Condition) {
+            if ($this->right->isAlwaysTrue()) {
+                if ($this->op == "and") {
+                    return $this->left;
+                }
+            }
+        }
+        else {
+            $this->left = $this->left->simplify();
+            $this->right = $this->right->simplify();
+        }
+        return $this;
     }
     
     public function toString() {

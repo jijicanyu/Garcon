@@ -359,29 +359,7 @@ function do_statements($func_stmts, &$sym_table) {
     return new TaintInfo(0, 1);
 }
 
-function gen_callee_table($args, $func_proto, $caller_table) {
-    $newtable = [];
-    $params = $func_proto->params;
-    for ($i = 0; $i < count($params); $i++) {
-        $left = $params[$i];
-        $right = $args[$i];
-        $taint_info = eval_expr($right, $caller_table);
-        $var_name = get_left_side_name($left);
-        if ($taint_info->value > 0) {
-            pp("add {$var_name}");
-            if ($right instanceof Node\Expr\ArrayDimFetch) {
-                $newtable[$var_name] = new TaintInfo($taint_info->value, $taint_info->certainty/2);
-            }
-            else {
-                $newtable[$var_name] = $taint_info;
-            }
-        }
-        else {
-            
-        }
-    }
-    return $newtable;
-}
+
 
 function get_alias($name) {
     global $alias_map;

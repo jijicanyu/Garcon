@@ -4,6 +4,7 @@ require_once './vendor/autoload.php';
 require_once 'symbolTable.php';
 require_once 'taintInfo.php';
 require_once 'utility.php';
+require_once 'preprocessor.php';
 use PhpParser\Error;
 use PhpParser\NodeTraverser;
 use PhpParser\ParserFactory;
@@ -16,11 +17,10 @@ $parser        = (new ParserFactory)->create(ParserFactory::PREFER_PHP7);
 $traverser     = new NodeTraverser;
 
 
-
 /* read and parse code from stdin */
 
 /* for debug */
-$code = file_get_contents("demo/while.php");
+$code = file_get_contents("demo/class.php");
 // $code = file_get_contents("php://stdin");
 $stmts = $parser->parse($code);
 
@@ -45,6 +45,7 @@ $sani_funcs['xss'] = ['htmlspecialchars'=>1];
 /* deprecated */
 $cond_mode = 0;
 
+
 /* construct funcs dict */
 foreach($stmts as $stmt) {
     if ($stmt instanceof Node\Stmt\Function_) {
@@ -58,20 +59,29 @@ do_statements($stmts, $tainted_vars);
 fclose($log);
 
 function do_assign($left, $right, &$sym_table) {
-//    global $classes_assign_map, $classes;
-//    /* special case for simple class assignment */
-//    if ($right instanceof Node\Expr\Variable) {
-//        if ($left instanceof Node\Expr\Variable) {
-//            if (array_key_exists($right->name, $classes)) {
-//                $classes[$left->name] = 1;
-//                $classes_assign_map[$left->name] = $right->name;
-//            }
-//        }
-//        else {
-//            /* ignore for now */
-//        }
-//    }
-//
+    /* special case for simple class assignment */
+    if ($right instanceof Node\Expr\Variable) {
+        if ($left instanceof Node\Expr\Variable) {
+            if ($sym_table->isClass($right->name)) {
+                $sym_table->registerClass($left->name);
+                $sym_table->addClassAssign($left->name, $right->name);
+            }
+        }
+        else {
+            /* ignore for now */
+        }
+    }
+
+    if ($right instanceof Node\Expr\New_) {
+        $cls_name = $left->name;
+        if ($sym_table->isClass($cls_name)) {
+            $sym_table->invalidateClassMap($cls_name);
+        }
+        else {
+            $sym_table->registerClass($cls_name);
+        }
+    }
+
     // @new
     $info = eval_expr($right, $sym_table);
     if ($left instanceof Node\Expr\Variable) {
@@ -96,7 +106,12 @@ function do_assign($left, $right, &$sym_table) {
     }
 
     else if ($left instanceof Node\Expr\PropertyFetch) {
-
+        $target_class = $sym_table->resolveClassAssign($left->var->name);
+        $class_table = $sym_table->getClassTable($target_class);
+        $b_cond = $sym_table->getBranchCondition();
+        $prop = $left->name;
+        $class_table->addProp($prop, $info, $b_cond);
+        $sym_table->registerClass($target_class);
     }
 //    $left_name = get_left_side_name($left);
 //    if ($taint_info->value > 0) {
@@ -128,7 +143,7 @@ function get_array_taint_info($expr, $sym_table) {
 }
 
 function do_statements($func_stmts, &$sym_table) {
-    global $cond_mode;
+    global $vul_count;
     /* only consider assign for now */
     foreach ($func_stmts as $stmt) {
         /* assignment is the most common expression */
@@ -160,12 +175,25 @@ function do_statements($func_stmts, &$sym_table) {
         }
 
         else if ($stmt instanceof Node\Stmt\While_) {
+            $before = $vul_count;
             $cond = new Condition();
             $cond->setExpr($stmt->cond);
             $cond->setValue(true);
+            $cond->setRoundStr(0);
             $sym_table->pushBranchCondition(clone $cond);
             do_statements($stmt->stmts, $sym_table);
             $sym_table->popBranchCondition();
+
+            if ($vul_count == $before) {
+                $cond = new Condition();
+                $cond->setExpr($stmt->cond);
+                $cond->setValue(true);
+                $cond->setRoundStr(1);
+                $sym_table->pushBranchCondition(clone $cond);
+                do_statements($stmt->stmts, $sym_table);
+                $sym_table->popBranchCondition();
+            }
+
         }
         /* ignore ifelse for now */
 
@@ -232,6 +260,29 @@ function is_args_tainted($args, $sym_table) {
     return new TaintInfo();
 }
 
+function gen_callee_table($args, $func_proto, $caller_table) {
+    $newtable = clone $caller_table;
+    $params = $func_proto->params;
+    for ($i = 0; $i < count($params); $i++) {
+        $left = $params[$i]->name;
+        $right = $args[$i]->value->name;
+        if ($caller_table->isInStrTable($right)) {
+            $newtable->strTableReplaceKey($right, $left);
+        }
+        else if ($caller_table->isInArrTable($right)) {
+            $newtable->arrTableReplaceKey($right, $left);
+        }
+        else if ($caller_table->isInClsTable($right)) {
+            //$newtable->setSpecialClassTable();
+            $newtable->clsTableReplaceKey($right, $left);
+
+        }
+        else {
+            
+        }
+    }
+    return $newtable;
+}
 
 function eval_func($func_name, $args, &$sym_table) {
     global $user_funcs;
@@ -257,7 +308,8 @@ function eval_func($func_name, $args, &$sym_table) {
     else if (array_key_exists($func_name, $user_funcs)) {
         $func_proto = $user_funcs[$func_name];
         $callee_table = gen_callee_table($args, $func_proto, $sym_table);
-        return do_statements($func_proto->stmts, $callee_table);        
+        $return = do_statements($func_proto->stmts, $callee_table);
+        return $return;
     }
     /* if built-in function */
     else {
@@ -277,14 +329,8 @@ function eval_func($func_name, $args, &$sym_table) {
     }
 }
 
-function constr_prop_name($class_name, $prop) {
-    return "$class_name::$prop";
-}
-
-
-
 function eval_expr($expr, &$sym_table) {
-    global $classes, $nodePrinter;
+
     $expr_type = get_class($expr);
     $info = new TaintInfo();
 
@@ -319,14 +365,14 @@ function eval_expr($expr, &$sym_table) {
 
     else if ($expr instanceof Node\Expr\PropertyFetch) {
         pp("evaluate propertyfetch...");
-        $resolved_name = resolve_class_assign($expr->var->name);
+        $class_name = $expr->var->name;
+        $resolved_name = $sym_table->resolveClassAssign($class_name);
         pp("resolved class: $resolved_name");
         
-        $name = constr_prop_name($resolved_name, $expr->name);
-        pp("resolved var: $name");
-        // $name = get_left_side_name($expr);
-        $classes[$expr->var->name] = 1;
-        $expr->setAttribute("tainted", clone get_var($name, $sym_table));
+        $prop_name = $expr->name;
+        $class_table = $sym_table->getClassTable($resolved_name);
+        $info = $class_table->getProp($prop_name);
+        //$classes[$expr->var->name] = 1;
     }
 
     else if ($expr instanceof Node\Expr\BinaryOp) {
@@ -396,6 +442,10 @@ function eval_expr($expr, &$sym_table) {
     else if ($expr instanceof Node\Expr\AssignRef) {
         return do_assignref($expr->var, $expr->expr, $sym_table);
     }
+
+    else if ($expr instanceof PhpParser\Node\Expr\New_) {
+
+    }
     
     else {
         echo "unsupported expr type: $expr_type\n";
@@ -414,6 +464,5 @@ function do_assignref($left, $right, $sym_table) {
     $alias_map[get_left_side_name($left)] = $right->name;
     return get_var($right->name, $sym_table);
 }
-
 
 ?>
