@@ -228,10 +228,15 @@ class ArrayTable {
             return $this->scalar_table[$name];
         }
         else {
-            $new = $this->getScalar("pending");
-            $new->replaceTaintCondValue("pending", $name);
-            return $new;
+            if ($this->isInScalarTable("pending")) {
+                $new = $this->getScalar("pending");
+                $new->replaceTaintCondValue("pending", $name);
+                return $new;
 
+            }
+            else {
+                return new TaintInfo();
+            }
 //            if (is_null($this->pending_taint)) {
 //                return new TaintInfo();
 //            }
@@ -245,12 +250,11 @@ class ArrayTable {
     }
     
     public function addTaintedExpr($expr, $info, $b_cond) {
-//        $code = get_stmt_str($expr);
-//        $code = str_replace(";", "", $code);
+        if ($this->isInScalarTable("pending") == false) {
+            $this->setScalar("pending", new TaintInfo());
+        }
+
         foreach ($this->scalar_table as $k=>$v) {
-            if (is_string($k) and $k == "pending") {
-                continue;
-            }
             $cond = new Condition();
             $cond->setExpr($expr);
             $cond->setValue($k);
@@ -259,13 +263,7 @@ class ArrayTable {
             $this->addScalar($k, $uncertain_info, $b_cond);
             // $v->merge($uncertain_info, "or");
         }
-                
-        $cond = new Condition();
-        $cond->setExpr($expr);
-        $cond->setValue("pending");
-        $uncertain_info = clone $info;
-        $uncertain_info->addTaintCondition($cond, "and");
-        $this->addScalar("pending", $uncertain_info, $b_cond);
+
 //
 //        if (is_null($this->pending_taint)) {
 //            $this->pending_taint = $uncertain_info;

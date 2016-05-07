@@ -20,7 +20,7 @@ $traverser     = new NodeTraverser;
 /* read and parse code from stdin */
 
 /* for debug */
-$code = file_get_contents("demo/new1.php");
+$code = file_get_contents("demo/while.php");
 // $code = file_get_contents("php://stdin");
 $stmts = $parser->parse($code);
 
@@ -157,6 +157,15 @@ function do_statements($func_stmts, &$sym_table) {
                 $sym_table->popBranchCondition();
             }
 
+        }
+
+        else if ($stmt instanceof Node\Stmt\While_) {
+            $cond = new Condition();
+            $cond->setExpr($stmt->cond);
+            $cond->setValue(true);
+            $sym_table->pushBranchCondition(clone $cond);
+            do_statements($stmt->stmts, $sym_table);
+            $sym_table->popBranchCondition();
         }
         /* ignore ifelse for now */
 
@@ -324,14 +333,15 @@ function eval_expr($expr, &$sym_table) {
         pp("evaluate binaryOp $expr_type...");
         $left_v = eval_expr($expr->left, $sym_table);
         $right_v = eval_expr($expr->right, $sym_table);
-        if ($left_v->value) {
-            $expr->setAttribute("tainted", clone $left_v);
+
+        if ($left_v->isTainted()) {
+            $info = $left_v;
         }
-        else if ($right_v->value) {
-            $expr->setAttribute("tainted", clone $right_v);
+        else if ($right_v->isTainted()) {
+            $info = $right_v;
         }
         else {
-            $expr->setAttribute("tainted", new TaintInfo(0, 1));
+            /* pass */
         }
     }
 
