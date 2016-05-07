@@ -48,23 +48,22 @@ class SymbolTable {
     
     public function mergeStr($var, $info) {
         $target = $this->resolveStrAlias($var);
+        $b_cond = clone $this->getBranchCondition();
         if ($this->isInStrTable($target)) {
             if ($info->isTainted()) {
-                $info->setTaintCondition($this->getBranchCondition());
+                $info->setTaintCondition($b_cond);
                 $this->getStr($target)->merge(clone $info, "or");
             }
             else {
-                // $info->negateTaintCondition();
-                $info_cond = clone $this->getBranchCondition();
-                $info_cond->setNot();
-                $this->getStr($target)->addTaintCondition($info_cond, "and");
+                $b_cond->setNot();
+                $this->getStr($target)->addTaintCondition($b_cond, "and");
             }
         }
         
         else {
             if ($info->isTainted()) {
-                $info->setTaintCondition($this->getBranchCondition());
-                $this->setStr($var, $info);
+                $info->setTaintCondition($b_cond);
+                $this->setStr($target, $info);
             }
 
         }
@@ -171,15 +170,45 @@ class ArrayTable {
     public $uncertain_bad_table = [];
     public $pending_taint;
     
+    public function isInScalarTable($name) {
+        return array_key_exists($name, $this->scalar_table);
+    }
+    
     public function __clone() {
         $this->scalar_table = deep_copy_arr($this->scalar_table);
         $this->uncertain_good_table = deep_copy_arr($this->uncertain_good_table);
         $this->uncertain_bad_table = deep_copy_arr($this->uncertain_bad_table);
     }
+    
+    public function setScalar($name, $info) {
+        $this->scalar_table[$name] = clone $info;
+    }
 
     /* in arraytable, empty TainInfo should also be maintainted, because it is 100% untainted */
-    public function addScalar($key, $info) {
-        $this->scalar_table[$key] = clone $info;
+    public function addScalar($key, $info, $b_cond) {
+        $target = $key;
+        if ($this->isInScalarTable($target)) {
+            if ($info->isTainted()) {
+                $info->addTaintCondition($b_cond, "and");
+                $this->getScalar($target)->merge(clone $info, "or");
+            }
+            else {
+                $b_cond->setNot();
+                $this->getScalar($target)->addTaintCondition($b_cond, "and");
+            }
+        }
+
+        else {
+            if ($info->isTainted()) {
+                $info->addTaintCondition($b_cond, "and");
+                $this->setScalar($target, $info);
+            }
+            else {
+                $info->addTaintCondition($b_cond, "and");
+                $this->setScalar($target, $info);
+            }
+        }
+        
 //        if ($info->isTainted()) {
 //            $this->scalar_table[$key] = clone $info;
 //        }
@@ -187,33 +216,48 @@ class ArrayTable {
 //            unset($this->scalar_table[$key]);
 //        }
     }
+
+    public function mergeStr($var, $info) {
+        $target = $this->resolveStrAlias($var);
+        $b_cond = clone $this->getBranchCondition();
+        
+    }
     
     public function getScalar($name) {
         if (array_key_exists($name, $this->scalar_table)) {
             return $this->scalar_table[$name];
         }
         else {
-            if (is_null($this->pending_taint)) {
-                return new TaintInfo();
-            }
-            else {
-                $new = clone $this->pending_taint;
-                $new->replaceTaintCondValue("pending", $name);
-                return $new;
-            }
+            $new = $this->getScalar("pending");
+            $new->replaceTaintCondValue("pending", $name);
+            return $new;
+
+//            if (is_null($this->pending_taint)) {
+//                return new TaintInfo();
+//            }
+//            else {
+//                $new = clone $this->pending_taint;
+//                $new = $this->getScalar("pending");
+//                $new->replaceTaintCondValue("pending", $name);
+//                return $new;
+//            }
         }
     }
     
-    public function addTaintedExpr($expr, $info) {
+    public function addTaintedExpr($expr, $info, $b_cond) {
 //        $code = get_stmt_str($expr);
 //        $code = str_replace(";", "", $code);
         foreach ($this->scalar_table as $k=>$v) {
+            if (is_string($k) and $k == "pending") {
+                continue;
+            }
             $cond = new Condition();
             $cond->setExpr($expr);
             $cond->setValue($k);
             $uncertain_info = clone $info;
             $uncertain_info->addTaintCondition($cond, "and");
-            $v->merge($uncertain_info, "or");
+            $this->addScalar($k, $uncertain_info, $b_cond);
+            // $v->merge($uncertain_info, "or");
         }
                 
         $cond = new Condition();
@@ -221,17 +265,35 @@ class ArrayTable {
         $cond->setValue("pending");
         $uncertain_info = clone $info;
         $uncertain_info->addTaintCondition($cond, "and");
-        
-        if (is_null($this->pending_taint)) {
-            $this->pending_taint = $uncertain_info;
-        }
-        else {
-            $this->pending_taint->merge($uncertain_info, "or");
-        }
+        $this->addScalar("pending", $uncertain_info, $b_cond);
+//
+//        if (is_null($this->pending_taint)) {
+//            $this->pending_taint = $uncertain_info;
+//        }
+//        else {
+//            $this->pending_taint->merge($uncertain_info, "or");
+//        }
     }
     
-    public function addUntaintedExpr($expr, $info) {
-        array_push($this->uncertain_good_table, $info);
+    public function addUntaintedExpr($expr, $info, $b_cond) {
+        foreach ($this->scalar_table as $k=>$v) {
+//            if (is_string($k) and $k == "pending") {
+//                continue;
+//            }
+            $cond = new Condition();
+            $cond->setExpr($expr);
+            $cond->setValue($k);
+            $cond = $cond->concatCondition($b_cond, "and");
+            $cond->setNot();
+            $v->addTaintCondition($cond, "and");
+        }
+
+//        if (is_null($this->pending_taint)) {
+//            $this->pending_taint = $uncertain_info;
+//        }
+//        else {
+//            $this->pending_taint->merge($uncertain_info, "or");
+//        }
     }
 }
 

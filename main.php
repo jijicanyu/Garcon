@@ -52,7 +52,7 @@ foreach($stmts as $stmt) {
     }
 }
 do_statements($stmts, $tainted_vars);
-pp($code);
+// pp($code);
 //pp($tainted_vars);
 
 fclose($log);
@@ -81,15 +81,16 @@ function do_assign($left, $right, &$sym_table) {
 
     else if ($left instanceof Node\Expr\ArrayDimFetch) {
         $arr_table = $sym_table->getArrayTable($left->var->name);
+        $b_cond = $sym_table->getBranchCondition();
         if ($left->dim instanceof Node\Scalar) {
-            $arr_table->addScalar($left->dim->value, $info);
+            $arr_table->addScalar($left->dim->value, $info, $b_cond);
         }
         else {
             if ($info->isTainted()) {
-                $arr_table->addTaintedExpr($left->dim, $info);
+                $arr_table->addTaintedExpr($left->dim, $info, $b_cond);
             }
             else {
-                $arr_table->addUntaintedExpr($left->dim, $info);
+                $arr_table->addUntaintedExpr($left->dim, $info, $b_cond);
             }
         }
     }
