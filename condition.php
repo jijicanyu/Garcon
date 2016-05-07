@@ -51,42 +51,79 @@ class Condition {
     public function setRelation($relation) {
         $this->relation = $relation;
     }
+    
+    public function setNot() {
+        if ($this->relation == "==") {
+            $this->relation = "!=";
+        }
+        else {
+            $this->relation = "==";
+        }
+    }
 
     public function evaluate() {
 
     }
+    
+    
 }
 
 class CompoundCondition {
+    /* left is a compound, right is a single condition */
     public $left = NULL;
     public $op = "";
     public $right = NULL;
     
     public function __construct(Condition $cond) {
-        $this->left = $cond;
+        $this->right = $cond;
     }
 
-    public function setRight(CompoundCondition $right) {
-        $this->right = $right;
+    public function setLeft(CompoundCondition $left) {
+        $this->left = $left;
     }
 
     public function ConcatCondition(Condition $cond, $op) {
         $new = new CompoundCondition($cond);
         $new->setOp($op);
-        $new->setRight($this);
+        $new->setLeft($this);
+    }
+    
+    public function ConcatCompoundCondition(CompoundCondition $cond, $op) {
+        
     }
 
     public function setOp($op) {
         $this->op = $op;
     }
     
-    public function toString() {
-        if (is_null($this->right)) {
-            return $this->left->toString();
+    public function notOp() {
+        assert($this->op != "");
+        if ($this->op == "and") {
+            $this->op = "or";
         }
         else {
-            $left_str = $this->left->toString();
-            return "($left_str $this->op {$this->right->toString()})";
+            $this->op = "and";
+        }
+    }
+    
+    public function setNot() {
+        if (is_null($this->op)) {
+            $this->right->setNot();
+        }
+        else {
+            $this->right->setNot();
+            $this->notOp();
+            $this->left->setNot();
+        }
+    }
+    
+    public function toString() {
+        if (is_null($this->left)) {
+            return $this->right->toString();
+        }
+        else {
+            $right_str = $this->right->toString();
+            return "({$this->left->toString()} $this->op $right_str)";
         }
     }
 }

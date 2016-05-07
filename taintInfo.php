@@ -22,7 +22,7 @@ class TaintInfo {
         return !empty($this->taint_list);
     }
 
-    public function addTaintCondition($cond) {
+    public function addTaintCondition($cond, $op) {
         foreach ($this->taint_list as $t) {
             $t->addCondition($cond);
         }
@@ -45,11 +45,11 @@ class TaintInfo {
         }
     }
     
-    public function replaceTaintCondValue($v) {
-        foreach ($this->taint_list as $t) {
-            $t->replaceCondValue($v);
-        }
-    }
+//    public function replaceTaintCondValue($v) {
+//        foreach ($this->taint_list as $t) {
+//            $t->replaceCondValue($v);
+//        }
+//    }
 
     public function addSingleTaint($t) {
         array_push($this->taint_list, clone $t);
@@ -154,7 +154,7 @@ class TaintInfo {
 
 class SingleTaint {
     public $type = 1;
-    public $conditions = [];
+    public $condition = NULL;
 
     public function getType()
     {
@@ -166,20 +166,29 @@ class SingleTaint {
         $this->type = $type;
     }
 
-    public function addCondition($c) {
-        array_push($this->conditions, $c);
+    public function addCondition(Condition $c, $op) {
+        if (is_null($this->condition)) {
+            if ($op == "or") {
+                /* some condition || NULL condition = NULL
+                /* remain NULL */
+            }
+            else {
+                $this->condition = new CompoundCondition($c);
+            }
+        }
+        
     }
 
     public function getConditions()
     {
-        return $this->conditions;
+        return $this->condition;
     }
     
-    public function replaceCondValue($v) {
-        foreach ($this->conditions as $condition) {
-            $condition->setValue($v);
-        }
-    }
+//    public function replaceCondValue($v) {
+//        foreach ($this->conditions as $condition) {
+//            $condition->setValue($v);
+//        }
+//    }
     
     public function merge($new) {
         assert($this->type == $new->type);
