@@ -206,6 +206,7 @@ class CompoundCondition {
             }
         }
         else if ($this->left instanceof Condition) {
+            $this->right = $this->right->simplify();
             if ($this->left->isAlwaysTrue()) {
                 if ($this->op == "and") {
                     return $this->right;
@@ -214,6 +215,7 @@ class CompoundCondition {
             }
         }
         else if ($this->right instanceof Condition) {
+            $this->left = $this->left->simplify();
             if ($this->right->isAlwaysTrue()) {
                 if ($this->op == "and") {
                     return $this->left;

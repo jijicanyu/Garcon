@@ -133,6 +133,9 @@ class TaintInfo {
             if ($vul != "") {
                 $vul_count++;
                 $taint_conds = $t->getCondition()->simplify();
+                if (!is_null($taint_conds) && $taint_conds->isAlwaysFalse()) {
+                    continue;
+                }
                 echo "There is a $vul vulnerability at line $lineno" . PHP_EOL;
                 if (is_null($branch_conds) == false) {
                     echo "When the branch(sink) conditions is satisfied:" . PHP_EOL;
