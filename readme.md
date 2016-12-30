@@ -1,7 +1,7 @@
 ## Taint Analysis
 SQL injection and other types of injects are among the common techniques to attack web applications, taint analysis uses abstract interpretation to compute taint propagation information and thus identify vulnerabilities in the source code. The popularity of PHP in the domain of web development makes it the target of this project.
 
-The intuitive solution is to embed the analysis inside the PHP interpreter, which involves a fair amount of work, and someone might have already done so. Alternatively, a stand-alone script, which is the solution we settle
+The intuitive solution is to embed the analysis inside the PHP interpreter, which involves a fair amount of work, and someone might have already done so. Alternatively, a stand-alone script, which is the solution we settled on, also does the job without modifying the interpreter itself.
 
 The rest of the ducoment explains the structure and usage of the source code, as well as the key ideas behind the program.
 
