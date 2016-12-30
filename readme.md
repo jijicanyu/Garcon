@@ -1,4 +1,9 @@
-This document explains the structure and usage of the source code, as well as the key ideas behind the program.
+## Taint Analysis
+SQL injection and other types of injects are among the common techniques to attack web applications, taint analysis uses abstract interpretation to compute taint propagation information and thus identify vulnerabilities in the source code. The popularity of PHP in the domain of web development makes it the target of this project.
+
+The intuitive solution is to embed the analysis inside the PHP interpreter, which involves a fair amount of work, and someone might have already done so. Alternatively, a stand-alone script, which is the solution we settle
+
+The rest of the ducoment explains the structure and usage of the source code, as well as the key ideas behind the program.
 
 ## Dependencies
 - [php-parser](https://github.com/nikic/PHP-Parser)
@@ -46,6 +51,30 @@ input_from_params() == true
 - condition.php: implements the Condition class and CompoundCondition class, which are the cornerstone of the analyzer
 
 Besides, test files are in input/, demo files are in demo/. All other files are either for test or composer's file.
+
+## Reference
+[1] https://www.acsac.org/2005/papers/45.pdf
+This is actually a dynamic taint analysis for Java, but it tells me the roadmap of the basic taint analysis.
+
+[2] http://www.icosaedro.it/articoli/php-syntax-yacc.txt
+BNF for PHP's grammer
+
+[3] https://github.com/laruence/taint
+A php extension of taint analysis, but mainly supports PHP 7 and not have good support for PHP 5. 
+
+[4] https://websec.files.wordpress.com/2010/11/rips-slides.pdf
+http://php-security.org/downloads/rips.pdf
+RIPS is static vulnerability tool for PHP. It includes taint analysis, which seems very naive according to their paper's description though.
+
+[5] http://www.cs.virginia.edu/nguyen/phprevent/
+This paper is advised by David Evans, which is Dr. Nate Paul's advisor. 
+
+[6] https://www.usenix.org/legacy/event/sec05/tech/full_papers/livshits/livshits_html/
+This paper is the first paper that I read on this topic. They are using a very sophisticated method to find the vulnerability pattern, similar to how regular expression engine is implemented. 
+1. Define a pattern description language
+2. Use defined language to describe vulnerability pattern and feed to the engine to construct a DFA
+3. Use constructed DFA to match the target code.
+The advisor of this paper, Monica Lam, is one of the authors of the famous Dragon Book. She has a series of papers on taint analysis.
 
 ## Classes
 #### SymbolTable
@@ -108,4 +137,4 @@ system($b[0]);
 ```
 My thoery should be right, but what happened was even if `// $a = new A();` is uncommented, `$c ->foo` will still be changed.
 
-Besides this serious problem, other trivial things are that only core functionality was implemented and the program is not complete. Taint propagation in simple situations, such as string concatenation, is left unfinished.
+Besides, trivial cases of taint propagation, such as string concatenation, are left unimplemented.
