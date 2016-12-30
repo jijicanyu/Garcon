@@ -1,6 +1,6 @@
-This document explains the structure of the source code, how to use this program and key ideas behind the program.
+This document explains the structure and usage of the source code, as well as the key ideas behind the program.
 
-## dependencies
+## Dependencies
 - [php-parser](https://github.com/nikic/PHP-Parser)
 
 To install PHP-Parser:
@@ -8,17 +8,17 @@ To install PHP-Parser:
 $ php composer.phar require nikic/php-parser
 ```
 
-## usage
+## Usage
 ```bash
 $ ./main.php < input/1.php
 ```
-to suppress debug information:
+To suppress debug information:
 ```bash
 $ ./traverse.php < input/1.php 2> /dev/null
 ```
 
-## demo
-input
+## Example
+Input
 ```php
 <?php
 if(input_from_params()) {
@@ -29,7 +29,7 @@ if(input_from_params()) {
 print_($a);
 
 ```
-output
+Output
 ```
 There is a Persisted XSS vulnerability at line 7
 When the taint(source) conditions is satisfied:
@@ -39,7 +39,7 @@ When the taint(source) conditions is satisfied:
 input_from_params() == true
 ```
 
-## structure
+## Structure
 - main.php: traverses the AST and perform all the analysis on it
 - symbolTable.php: implements SymbolTable class, ArrayTable class and ClassTable class
 - taintInfo.php: implements TaintInfo class, SingleTaint class and SingleSanitize class
@@ -47,7 +47,7 @@ input_from_params() == true
 
 Besides, test files are in input/, demo files are in demo/. All other files are either for test or composer's file.
 
-## classes
+## Classes
 #### SymbolTable
 SymbolTable class is a collection of three symbol tables, namely string symbol table, array symbol table and object symbol table. String symbol table is implemented as a simple associate array. Because array can fetch index and object can fetch property so they should be implemented as a two dimensional array. In this implementation, the second level array is implemented as an object which contains an array and other relevant methods. There is no integer array or boolean array because they cannot be tainted and thus are never in any symbol table. All the tables use the same algorithm to calculate the taint condition.
 
@@ -79,7 +79,7 @@ A implementation of one single contion such as `$a==true`. Include basic operati
 #### CompoundCondition
 Represent a condition logic expression such as `$b==true AND $a!=true`. A CompoundCondition object has a left condition, right condition and operator. Both left condition and right condition can be either a Condition obejct or another CompoundCondition object. In this way, conditions are concatenated.
 
-### Defect
+## Issues
 One problem I was struggling with was that I wanted to use PHP's obejct assignment feature to implemented the object assignment problem. The basic idea is that when copy an array table to the inner symbol table, do a deep copy, and do a shallow copy for class table. And shallow copy is default for object assignment.
 ```php
 <?php
